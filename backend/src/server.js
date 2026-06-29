@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const studentRoutes = require('./routes/studentRoutes');
+const errorMiddleware = require('./middleware/errorMiddleware');
 
 dotenv.config();
 
@@ -13,6 +15,9 @@ app.use(express.json());
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
+
+app.use('/', studentRoutes);
+app.use(errorMiddleware);
 
 app.listen(PORT, () => {
   console.log(`GPA Dashboard backend listening on port ${PORT}`);

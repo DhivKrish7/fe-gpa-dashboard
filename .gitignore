@@ -14,7 +14,7 @@ backend/.env
 backend/.env.local
 
 service-account.json
-backend/service-account.json
+backend/gpa-dashboard-500907-29492e7e96f2.json
 *.pem
 *.key
 

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchSheetData } from '../services/sheetService';
-import { computeGPA, calculateNeededGPA, getRankedStudents } from '../utils/gpa';
-import { ALL_CODES, L1_COURSES, L2_COURSES, L3_CORE } from '../constants/courses';
+import { fetchBatchStats } from '../services/api';
 
-export const useDashboardData = () => {
+export const useDashboardData = (selectedStudentId = '', options = {}) => {
   const [rows, setRows] = useState([]);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [batchStats, setBatchStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
@@ -13,64 +13,67 @@ export const useDashboardData = () => {
   const [missingColumns, setMissingColumns] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const refreshData = async () => {
+  const targetGPA = options.targetGPA;
+  const overrides = options.overrides || {};
+  const overrideKey = useMemo(() => JSON.stringify(overrides), [overrides]);
+
+  const loadData = async (isMounted = () => true) => {
     setLoading(true);
     setError(null);
+
     try {
-      const result = await fetchSheetData({ forceRefresh: true });
-      setRows(result.rows || []);
-      setLastSyncedAt(result.timestamp);
-      setSource(result.source);
-      setSchemaValid(result.schemaValid);
-      setMissingColumns(result.missingColumns || []);
+      const batchData = await fetchBatchStats({
+        targetGPA,
+        studentId: selectedStudentId,
+        overrides,
+      });
+
+      if (!isMounted()) return;
+
+      const studentRows = Array.isArray(batchData?.students) ? batchData.students : [];
+      setRows(studentRows);
+      setLeaderboard(Array.isArray(batchData?.leaderboard) ? batchData.leaderboard : []);
+      setBatchStats(batchData || null);
+      setLastSyncedAt(new Date().toISOString());
+      setSource('api');
+      setSchemaValid(true);
+      setMissingColumns([]);
     } catch (err) {
+      if (!isMounted()) return;
       setError(err.message || 'Unable to fetch batch data.');
     } finally {
-      setLoading(false);
+      if (isMounted()) setLoading(false);
     }
   };
 
-  useEffect(() => {
-    let isMounted = true;
-    const load = async () => {
-      try {
-        const result = await fetchSheetData();
-        if (!isMounted) return;
-        setRows(result.rows || []);
-        setLastSyncedAt(result.timestamp);
-        setSource(result.source);
-        setSchemaValid(result.schemaValid);
-        setMissingColumns(result.missingColumns || []);
-      } catch (err) {
-        if (!isMounted) return;
-        setError(err.message || 'Unable to fetch batch data.');
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
+  const refreshData = async () => {
+    await loadData();
+  };
 
-    load();
+  useEffect(() => {
+    let mounted = true;
+    loadData(() => mounted);
+
     return () => {
-      isMounted = false;
+      mounted = false;
     };
-  }, [refreshKey]);
+  }, [refreshKey, selectedStudentId, targetGPA, overrideKey]);
 
   const allIds = useMemo(() => {
-    return [...new Set(rows.map((row) => row['Reg. No'] || row['Reg ID'] || '').filter(Boolean))].sort();
+    const ids = rows.map((row) => row.id || '').filter(Boolean);
+    return [...new Set(ids)].sort();
   }, [rows]);
-
-  const rankedStudents = useMemo(() => getRankedStudents(rows, L1_COURSES), [rows]);
 
   const studentLookup = useMemo(() => {
     return rows.reduce((acc, row) => {
-      const id = row['Reg. No'] || row['Reg ID'];
-      if (id) acc[id] = row;
+      if (row.id) acc[row.id] = row;
       return acc;
     }, {});
   }, [rows]);
 
   return {
     rows,
+    batchStats,
     loading,
     error,
     source,
@@ -78,11 +81,11 @@ export const useDashboardData = () => {
     missingColumns,
     lastSyncedAt,
     allIds,
-    rankedStudents,
+    rankedStudents: leaderboard,
     studentLookup,
+    selectedStudent: selectedStudentId ? studentLookup[selectedStudentId] || null : null,
     refreshData,
     refreshKey,
     setRefreshKey,
-    courses: { L1_COURSES, L2_COURSES, L3_CORE, ALL_CODES },
   };
 };
