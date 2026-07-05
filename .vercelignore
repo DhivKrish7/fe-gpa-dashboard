@@ -1,0 +1,6 @@
+backend/
+backend/node_modules/
+backend/.env
+service-account.json
+*.pem
+*.key
