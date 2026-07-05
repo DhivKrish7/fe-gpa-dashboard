@@ -10,6 +10,8 @@ import { useDashboardData } from './hooks/useDashboardData';
 import { buildReportHTML } from './utils/report';
 import { GRADE_COLORS, GRADE_SCALE } from './constants/grades';
 
+const DEFAULT_ERROR_MESSAGE = 'Unable to load GPA data. Please try again later.';
+
 const T = { bg: '#0f1117', card: '#1a1d2e', border: '#2d3148', muted: '#64748b', dim: '#475569', text: '#e2e8f0', sub: '#94a3b8' };
 
 const gradeColor = (grade) => GRADE_COLORS[grade] || '#475569';
@@ -80,7 +82,15 @@ export default function App() {
         <StudentSelector searchQuery={searchQuery} onSearchChange={(value) => { setSearchQuery(value); setShowDropdown(true); }} onSelectStudent={(id) => { setStudentId(id); setSearchQuery(id); setShowDropdown(false); setUserGrades({}); }} onFocus={() => setShowDropdown(true)} filteredIds={filteredIds} loading={loading} error={error} selectedStudentId={studentId} allIds={allIds} showDropdown={showDropdown} onToggleDropdown={() => setShowDropdown((prev) => !prev)} dropRef={dropRef} />
         {lastSyncedAt ? <div style={{ fontSize: 11, color: '#475569', marginBottom: 18 }}>Last sync: {new Date(lastSyncedAt).toLocaleString()}</div> : null}
 
-        {!studentId ? (
+        {loading && !selectedStudent && !error ? (
+          <div style={{ textAlign: 'center', padding: '60px 0', color: T.muted }}>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>Loading dashboard...</div>
+          </div>
+        ) : error ? (
+          <div style={{ textAlign: 'center', padding: '60px 0', color: T.muted }}>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>{DEFAULT_ERROR_MESSAGE}</div>
+          </div>
+        ) : !studentId ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: T.muted }}>
             <div style={{ fontSize: 16, fontWeight: 600 }}>Select your Registration ID above to view your GPA dashboard</div>
             <div style={{ fontSize: 13, marginTop: 6 }}>{allIds.length > 0 ? `${allIds.length} students loaded from batch database` : 'Loading batch data...'}</div>

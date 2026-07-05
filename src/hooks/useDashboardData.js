@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchBatchStats } from '../services/api';
 
+const DEFAULT_ERROR_MESSAGE = 'Unable to load GPA data. Please try again later.';
+
 export const useDashboardData = (selectedStudentId = '', options = {}) => {
   const [rows, setRows] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
@@ -40,7 +42,7 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
       setMissingColumns([]);
     } catch (err) {
       if (!isMounted()) return;
-      setError(err.message || 'Unable to fetch batch data.');
+      setError(err.message || DEFAULT_ERROR_MESSAGE);
     } finally {
       if (isMounted()) setLoading(false);
     }

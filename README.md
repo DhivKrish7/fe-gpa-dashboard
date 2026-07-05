@@ -5,21 +5,27 @@ A modular React GPA dashboard for Financial Engineering students with batch anal
 ## Development
 
 1. Install frontend dependencies: `npm install`
-2. Start the frontend dev server: `npm run dev`
-3. Run frontend tests: `npm test -- --run`
-4. Build for production: `npm run build`
+2. Create a `.env` file in the project root.
+3. Set `VITE_API_BASE_URL` to your Google Apps Script endpoint, for example:
+   `VITE_API_BASE_URL=https://script.google.com/macros/s/XXXXXXXX/exec`
+4. Start the frontend dev server: `npm run dev`
+5. Run frontend tests: `npm test -- --run`
+6. Build for production: `npm run build`
 
-## Environment
+## Frontend data source
 
-Create a `.env` file for the frontend and configure `VITE_API_BASE_URL` to point at your backend.
+The app now reads student data directly from Google Apps Script.
 
-For local backend development, place a Google service account JSON file at `backend/service-account.json` and set `GOOGLE_SHEET_ID` in the backend environment.
+- No Node backend is required for production.
+- The frontend fetches the Apps Script URL from [src/config/api.js](src/config/api.js).
+- The app validates rows client-side, skips malformed records, and shows a friendly error state when the data source is unavailable.
 
-For Render deployment, configure these backend environment variables:
+## Vercel deployment
 
-- `GOOGLE_CLIENT_EMAIL`
-- `GOOGLE_PRIVATE_KEY`
-- `GOOGLE_PROJECT_ID`
-- `GOOGLE_SHEET_ID`
+1. Push the project to GitHub.
+2. Import the repository in Vercel.
+3. Set the environment variable:
+   - `VITE_API_BASE_URL=https://script.google.com/macros/s/XXXXXXXX/exec`
+4. Deploy.
 
-The frontend and backend are compatible with a Vercel frontend and a Render backend without any route or API contract changes.
+The frontend is fully compatible with Vercel and does not require the backend folder for production deployment.
