@@ -1,8 +1,54 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const Module = require('node:module');
+const path = require('node:path');
 const test = require('node:test');
 
 const servicePath = require.resolve('./googleSheetsService');
+
+const resetEnv = () => {
+  delete process.env.GOOGLE_CLIENT_EMAIL;
+  delete process.env.GOOGLE_PRIVATE_KEY;
+  delete process.env.GOOGLE_PROJECT_ID;
+  delete process.env.GOOGLE_SHEET_ID;
+  delete process.env.GOOGLE_SERVICE_ACCOUNT;
+  delete process.env.NODE_ENV;
+};
+
+const stubGoogleApis = (Module, jwtFactory) => {
+  const originalLoad = Module._load;
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === 'googleapis') {
+      return {
+        google: {
+          auth: {
+            JWT: jwtFactory,
+          },
+          sheets: () => ({
+            spreadsheets: {
+              values: {
+                get: async ({ spreadsheetId, range }) => ({
+                  spreadsheetId,
+                  range,
+                  data: {
+                    values: [
+                      ['Reg ID', 'Name', 'GPA', 'FE 1021', 'FE 1022', 'FE 1023', 'FE 1024', 'FE 1025', 'FE 1026', 'FE 1027', 'FE 1028', 'FE 1029', 'FE 1030'],
+                      ['001', 'Ada', '3.9', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D'],
+                    ],
+                  },
+                }),
+              },
+            },
+          }),
+        },
+      };
+    }
+
+    return originalLoad.apply(this, arguments);
+  };
+
+  return originalLoad;
+};
 
 test('googleSheetsService returns normalized student objects and a leaderboard', async () => {
   const originalLoad = Module._load;
@@ -63,6 +109,72 @@ test('googleSheetsService returns normalized student objects and a leaderboard',
     assert.deepEqual(leaderboard.map((entry) => entry.id), ['001', '002']);
   } finally {
     Module._load = originalLoad;
+    delete require.cache[servicePath];
+  }
+});
+
+test('googleSheetsService uses environment credentials when no local service-account file is present', async () => {
+  let jwtOptions;
+  const originalLoad = stubGoogleApis(Module, class JWT {
+    constructor(options) {
+      jwtOptions = options;
+      this.scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
+    }
+
+    async authorize() {
+      return undefined;
+    }
+  });
+  const previousEnv = { ...process.env };
+
+  resetEnv();
+  process.env.NODE_ENV = 'production';
+  process.env.GOOGLE_CLIENT_EMAIL = 'env@example.com';
+  process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\nxyz\n-----END PRIVATE KEY-----\n';
+  process.env.GOOGLE_PROJECT_ID = 'env-project';
+  process.env.GOOGLE_SHEET_ID = 'sheet-id';
+  process.env.GOOGLE_SERVICE_ACCOUNT = 'missing-service-account.json';
+
+  delete require.cache[servicePath];
+  const service = require('./googleSheetsService');
+
+  try {
+    await service.getStudents();
+    assert.equal(jwtOptions.email, 'env@example.com');
+    assert.equal(jwtOptions.projectId, 'env-project');
+    assert.match(jwtOptions.key, /xyz/);
+  } finally {
+    Module._load = originalLoad;
+    process.env = previousEnv;
+    delete require.cache[servicePath];
+  }
+});
+
+test('googleSheetsService reports a clear error when Google credentials are missing', async () => {
+  const originalLoad = stubGoogleApis(Module, class JWT {
+    constructor() {
+      this.scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
+    }
+
+    async authorize() {
+      return undefined;
+    }
+  });
+  const previousEnv = { ...process.env };
+
+  resetEnv();
+  process.env.NODE_ENV = 'production';
+  process.env.GOOGLE_SHEET_ID = 'sheet-id';
+  process.env.GOOGLE_SERVICE_ACCOUNT = 'missing-service-account.json';
+
+  delete require.cache[servicePath];
+  const service = require('./googleSheetsService');
+
+  try {
+    await assert.rejects(service.getRows(), /Google credentials are not configured/i);
+  } finally {
+    Module._load = originalLoad;
+    process.env = previousEnv;
     delete require.cache[servicePath];
   }
 });
