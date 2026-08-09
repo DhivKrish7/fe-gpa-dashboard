@@ -7,13 +7,36 @@ const RETRY_DELAY_MS = 2000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const buildApiUrl = () => {
+  try {
+    const base = API_BASE_URL;
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost';
+    const url = new URL(base, origin);
+    url.searchParams.set('t', `${Date.now()}`);
+    return url.toString();
+  } catch {
+    return `${API_BASE_URL}${API_BASE_URL.includes('?') ? '&' : '?'}t=${Date.now()}`;
+  }
+};
+
+const normalizePayload = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.students)) return payload.students;
+  return null;
+};
+
+const getUpdatedAt = (payload) => {
+  if (!payload || typeof payload.updatedAt !== 'string') return null;
+  return payload.updatedAt;
+};
+
 const getJson = async ({ retries = DEFAULT_RETRIES } = {}) => {
   let attempt = 0;
   let lastError;
 
   while (attempt <= retries) {
     try {
-      const response = await fetch(API_BASE_URL, {
+      const response = await fetch(buildApiUrl(), {
         headers: { Accept: 'application/json' },
       });
 
@@ -22,7 +45,11 @@ const getJson = async ({ retries = DEFAULT_RETRIES } = {}) => {
         throw new Error(errorPayload?.error || `Request failed with status ${response.status}`);
       }
 
-      return await response.json();
+      const data = await response.json();
+      if (data === null || data === undefined) {
+        throw new Error('Empty API response');
+      }
+      return data;
     } catch (error) {
       lastError = error;
       if (attempt === retries) break;
@@ -74,37 +101,110 @@ const round = (value, digits = 3) => {
 
 // ── Course catalogue helpers ──────────────────────────────────────────────────
 
-const getCourseCatalog = () =>
-  Object.values(COURSES).flatMap((level) => Object.values(level).flat());
+const normalizeCourseCode = (code) => {
+  const raw = String(code ?? '').trim().toUpperCase();
+  if (!raw) return '';
+  const spaced = raw.replace(/^([A-Z]{2})(\d{4})$/, '$1 $2');
+  return spaced.replace(/\s+/g, ' ');
+};
 
-// Semester I = FE 102x, Semester II = FE 103x (first two sems of Level I only)
-const SEM1_CODES = new Set(['FE 1021','FE 1022','FE 1023','FE 1024','FE 1025']);
-const SEM2_CODES = new Set(['FE 1026','FE 1027','FE 1028','FE 1029','FE 1030']);
+const formatShortLabel = (label) => {
+  if (!label) return '';
+  return label
+    .replace(/^Semester\s+/i, 'Sem ')
+    .replace(/^Level\s+/i, 'L ')
+    .replace(/Core Courses/i, 'Core')
+    .replace(/Financial Analytics Stream/i, 'FA Stream')
+    .replace(/Business Analysis Stream/i, 'BA Stream')
+    .replace(/BI Systems Stream/i, 'BI Stream');
+};
+
+const getCourseCatalog = () =>
+  Object.values(COURSES).flatMap((levelCourses) =>
+    Object.values(levelCourses).flat()
+  );
+
+const getCourseGroups = () =>
+  Object.entries(COURSES).flatMap(([level, semesters]) =>
+    Object.entries(semesters).map(([semesterLabel, courses]) => ({
+      level,
+      label: semesterLabel,
+      shortLabel: formatShortLabel(semesterLabel),
+      key: `${level}-${semesterLabel}`.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-_]/g, '').toLowerCase(),
+      courses,
+    }))
+  );
+
+const getCanonicalSemesterKey = (level, label) => {
+  const levelKey = String(level).replace(/\s+/g, '').toLowerCase();
+  const semMatch = String(label).match(/Semester\s*(\d+)/i);
+  if (levelKey === 'leveli' && semMatch) {
+    return `level1Semester${semMatch[1]}`;
+  }
+  if (levelKey === 'levelii' && semMatch) {
+    return `level2Semester${semMatch[1]}`;
+  }
+  if (levelKey === 'leveliii' && /Core/i.test(label)) {
+    return 'level3Core';
+  }
+  return `${levelKey}${String(label).replace(/\s+/g, '')}`;
+};
 
 // ── Build one student's course rows from raw GAS row ─────────────────────────
 
 const buildCourseRows = (row) => {
-  return getCourseCatalog().map((course) => {
-    // GAS row keys might be "FE1021" or "FE 1021" — normalise
-    const rawGrade =
-      row?.[course.code] ??
-      row?.[course.code.replace(' ', '')] ??
-      row?.grades?.[course.code] ??
-      '';
+  const catalog = getCourseCatalog();
+  const catalogCodes = new Set(catalog.map((course) => normalizeCourseCode(course.code)));
+
+  const getNormalizedGrade = (courseCode) => {
+    const normalized = normalizeCourseCode(courseCode);
+    return (
+      row?.[courseCode] ??
+      row?.[courseCode.replace(' ', '')] ??
+      row?.[normalized] ??
+      row?.[normalized.replace(' ', '')] ??
+      row?.grades?.[courseCode] ??
+      row?.grades?.[normalized] ??
+      ''
+    );
+  };
+
+  const knownCourseRows = catalog.map((course) => {
+    const rawGrade = getNormalizedGrade(course.code);
     const grade = normalizeGrade(rawGrade);
     const points = course.nonGPA ? null : gradeToPoints(grade);
     return {
-      code:        course.code,
-      name:        course.name,
-      credits:     course.credits,
+      code: course.code,
+      name: course.name,
+      credits: course.credits,
       grade,
       points,
       totalPoints: points !== null ? round(points * course.credits, 2) : null,
-      graded:      points !== null,
-      nonGPA:      Boolean(course.nonGPA),
-      editable:    false,
+      graded: points !== null,
+      nonGPA: Boolean(course.nonGPA),
+      editable: false,
     };
   });
+
+  const extraCourseRows = Object.keys(row || {}).reduce((extra, key) => {
+    const code = normalizeCourseCode(key);
+    if (!code || !/^[A-Z]{2}\s\d{4}$/.test(code) || catalogCodes.has(code)) return extra;
+    const rawGrade = normalizeGrade(row[key]);
+    return extra.concat({
+      code,
+      name: code,
+      credits: null,
+      grade: rawGrade,
+      points: null,
+      totalPoints: null,
+      graded: false,
+      nonGPA: true,
+      editable: false,
+      unknown: true,
+    });
+  }, []);
+
+  return [...knownCourseRows, ...extraCourseRows];
 };
 
 // ── Compute semester GPA correctly (weighted, handles absents) ────────────────
@@ -160,34 +260,60 @@ const buildStudentPayload = (row, targetGpa = 3.7) => {
   );
 
   const allCourseRows = buildCourseRows(row);
+  const courseRowMap = new Map(allCourseRows.map((course) => [course.code, course]));
+  const extraCourseRows = allCourseRows.filter((course) => course.unknown);
 
-  // Semester GPA — computed properly from weighted grades
-  const sem1Rows = allCourseRows.filter((c) => SEM1_CODES.has(c.code));
-  const sem2Rows = allCourseRows.filter((c) => SEM2_CODES.has(c.code));
-  const sem1GPA  = computeGPAFromRows(sem1Rows);
-  const sem2GPA  = computeGPAFromRows(sem2Rows);
+  const semesterGroups = getCourseGroups().map((group) => {
+    const courses = group.courses.map((course) =>
+      courseRowMap.get(course.code) ?? {
+        code: course.code,
+        name: course.name,
+        credits: course.credits,
+        grade: '',
+        points: null,
+        totalPoints: null,
+        graded: false,
+        nonGPA: Boolean(course.nonGPA),
+        editable: false,
+      }
+    );
 
-  const semesterGroups = [
-    {
-      key: 'level1Semester1', label: 'Semester I', shortLabel: 'Sem I', level: 'Level I',
-      gpa: sem1GPA, credits: sem1Rows.filter((c) => c.points !== null).reduce((s, c) => s + c.credits, 0),
-      totalCredits: 10, courses: sem1Rows, classification: getClassification(sem1GPA),
-    },
-    {
-      key: 'level1Semester2', label: 'Semester II', shortLabel: 'Sem II', level: 'Level I',
-      gpa: sem2GPA, credits: sem2Rows.filter((c) => c.points !== null).reduce((s, c) => s + c.credits, 0),
-      totalCredits: 10, courses: sem2Rows, classification: getClassification(sem2GPA),
-    },
-  ];
+    const gpa = computeGPAFromRows(courses);
+    const gradedCredits = courses.filter((c) => !c.nonGPA && c.points !== null).reduce((s, c) => s + c.credits, 0);
+    const totalCredits = courses.reduce((s, c) => s + (c.credits ?? 0), 0);
+    return {
+      key: group.key,
+      label: group.label,
+      shortLabel: group.shortLabel,
+      level: group.level,
+      gpa,
+      credits: gradedCredits,
+      totalCredits,
+      courses,
+      classification: getClassification(gpa),
+    };
+  });
 
-  // FIX 2: Overall GPA — prefer pre-computed from sheet, else compute from grades
-  const sheetGpa  = parseNumeric(row?.GPA ?? row?.gpa ?? row?.['GPA Score']);
+  if (extraCourseRows.length) {
+    semesterGroups.push({
+      key: 'additionalCourses',
+      label: 'Additional Courses',
+      shortLabel: 'Other',
+      level: 'Unknown',
+      gpa: null,
+      credits: 0,
+      totalCredits: 0,
+      courses: extraCourseRows,
+      classification: getClassification(null),
+    });
+  }
+
   const gradedRows = allCourseRows.filter((c) => !c.nonGPA && c.points !== null);
   const earnedCredits = gradedRows.reduce((s, c) => s + c.credits, 0);
   const computedGpa = earnedCredits > 0
     ? round(gradedRows.reduce((s, c) => s + c.points * c.credits, 0) / earnedCredits)
     : null;
-  const overallGpa = sheetGpa !== null ? round(sheetGpa, 3) : computedGpa;
+  const overallGpa = computedGpa;
   const overallClassification = getClassification(overallGpa);
 
   // Analytics
@@ -264,15 +390,18 @@ const buildBatchPayload = (rows, targetGpa = 3.7) => {
 
   const rankedStudents = validStudents.map((s) => {
     const r = rankMap.get(s.id) || { rank: null, percentile: null };
+    const semesterGpas = s.stats.semesters.reduce((acc, sem) => {
+      const canonical = getCanonicalSemesterKey(sem.level, sem.label);
+      acc[sem.key] = sem.gpa;
+      acc[canonical] = sem.gpa;
+      return acc;
+    }, {});
     return {
       ...s,
       stats: { ...s.stats, rank: r.rank, percentile: r.percentile, rankedStudentCount: withGpa.length },
       rank: r.rank,
       percentile: r.percentile,
-      semesterGpas: {
-        level1Semester1: s.stats.semesters[0]?.gpa ?? null,
-        level1Semester2: s.stats.semesters[1]?.gpa ?? null,
-      },
+      semesterGpas,
       classification: s.stats.degreeClassification,
     };
   });
@@ -302,12 +431,13 @@ const buildBatchPayload = (rows, targetGpa = 3.7) => {
 
 export const fetchStudents = async () => {
   const payload = await getJson();
-  return Array.isArray(payload) ? payload : [];
+  const rows = normalizePayload(payload);
+  return rows ?? [];
 };
 
 export const fetchStudent = async (id) => {
   const payload = await getJson();
-  const rows = Array.isArray(payload) ? payload : [];
+  const rows = normalizePayload(payload) ?? [];
   return rows.find((row) =>
     String(row?.['Reg ID'] ?? row?.['Reg. No'] ?? row?.id ?? '') === String(id)
   ) || null;
@@ -315,15 +445,20 @@ export const fetchStudent = async (id) => {
 
 export const fetchLeaderboard = async () => {
   const payload = await getJson();
-  return buildBatchPayload(Array.isArray(payload) ? payload : []).leaderboard;
+  const rows = normalizePayload(payload) ?? [];
+  return buildBatchPayload(rows).leaderboard;
 };
 
 export const fetchBatchStats = async () => {
   const payload = await getJson();
-  return buildBatchPayload(Array.isArray(payload) ? payload : []);
+  const rows = normalizePayload(payload);
+  if (!rows) throw new Error('Invalid API response shape');
+  const batch = buildBatchPayload(rows);
+  return { ...batch, updatedAt: getUpdatedAt(payload) };
 };
 
 export const fetchSubjects = async () => {
   const payload = await getJson();
-  return buildBatchPayload(Array.isArray(payload) ? payload : []).students;
+  const rows = normalizePayload(payload) ?? [];
+  return buildBatchPayload(rows).students;
 };

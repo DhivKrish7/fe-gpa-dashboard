@@ -29,7 +29,7 @@ export default function App() {
 
   const {
     batchStats, loading, error,
-    lastSyncedAt, allIds, rankedStudents,
+    lastSyncedAt, lastUpdatedAt, allIds, rankedStudents,
     selectedStudent, refreshData,
   } = useDashboardData(studentId, { targetGPA, overrides: userGrades });
 
@@ -39,6 +39,8 @@ export default function App() {
   const classification = stats?.degreeClassification || overall.classification || {};
   const forecast    = stats?.forecast || {};
   const levelOneSemesters = (stats?.semesters || []).filter((s) => s.level === 'Level I');
+  const refreshStatus = loading ? 'Updating…' : error ? 'Unable to refresh' : 'Live results';
+  const lastUpdatedLabel = lastUpdatedAt ? `Results last updated: ${new Date(lastUpdatedAt).toLocaleString()}` : lastSyncedAt ? `Last sync: ${new Date(lastSyncedAt).toLocaleString()}` : null;
   const semesterChartData = selectedStudent?.charts?.semesterTrend || [];
   const subjectChartData  = selectedStudent?.charts?.subjectComparison || [];
   const histogramData     = batchStats?.distribution || [];
@@ -95,11 +97,11 @@ export default function App() {
           error={error}
         />
 
-        {lastSyncedAt && (
-          <div style={{ fontSize: 11, color: '#475569', marginBottom: 18 }}>
-            Last sync: {new Date(lastSyncedAt).toLocaleString()}
-          </div>
-        )}
+<div style={{ fontSize: 11, color: '#475569', marginBottom: 18, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <span>{refreshStatus}</span>
+              {lastUpdatedLabel && <span>{lastUpdatedLabel}</span>}
+              <span>Auto-refresh: every 5 minutes</span>
+            </div>
 
         {/* ── Main content ── */}
         {loading && !selectedStudent && !error ? (
@@ -346,7 +348,7 @@ export default function App() {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                        {['Rank', 'Reg ID', 'Sem I GPA', 'Sem II GPA', 'Overall GPA', 'Class'].map((h) => (
+                        {['Rank', 'Reg ID', 'Sem I GPA', 'Sem II GPA', 'Sem III GPA', 'Overall GPA', 'Class'].map((h) => (
                           <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontSize: 10, color: T.dim, textTransform: 'uppercase', letterSpacing: '.08em' }}>{h}</th>
                         ))}
                       </tr>
@@ -362,6 +364,7 @@ export default function App() {
                             </td>
                             <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 600 }}>{formatNumber(s.semesterGpas?.level1Semester1)}</td>
                             <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 600 }}>{formatNumber(s.semesterGpas?.level1Semester2)}</td>
+                            <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 600 }}>{formatNumber(s.semesterGpas?.level1Semester3)}</td>
                             <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 800 }}>{formatNumber(s.gpa)}</td>
                             <td style={{ padding: '8px 16px', fontSize: 12, color: c.color || T.sub }}>{c.label || 'N/A'}</td>
                           </tr>

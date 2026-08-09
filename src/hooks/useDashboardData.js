@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchBatchStats } from '../services/api';
 
 const DEFAULT_ERROR_MESSAGE = 'Unable to load GPA data. Please try again later.';
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 export const useDashboardData = (selectedStudentId = '', options = {}) => {
   const [rows, setRows] = useState([]);
@@ -10,6 +11,7 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [source, setSource] = useState('loading');
   const [schemaValid, setSchemaValid] = useState(true);
   const [missingColumns, setMissingColumns] = useState([]);
@@ -18,6 +20,7 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
   const targetGPA = options.targetGPA;
   const overrides = options.overrides || {};
   const overrideKey = useMemo(() => JSON.stringify(overrides), [overrides]);
+  const intervalRef = useRef(null);
 
   const loadData = async (isMounted = () => true) => {
     setLoading(true);
@@ -37,6 +40,7 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
       setLeaderboard(Array.isArray(batchData?.leaderboard) ? batchData.leaderboard : []);
       setBatchStats(batchData || null);
       setLastSyncedAt(new Date().toISOString());
+      setLastUpdatedAt(batchData?.updatedAt ?? null);
       setSource('api');
       setSchemaValid(true);
       setMissingColumns([]);
@@ -49,7 +53,7 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
   };
 
   const refreshData = async () => {
-    await loadData();
+    setRefreshKey((key) => key + 1);
   };
 
   useEffect(() => {
@@ -59,7 +63,22 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
     return () => {
       mounted = false;
     };
-  }, [refreshKey, selectedStudentId, targetGPA, overrideKey]);
+  }, [refreshKey, selectedStudentId, overrideKey]);
+
+  useEffect(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+    intervalRef.current = setInterval(() => {
+      loadData(() => true);
+    }, REFRESH_INTERVAL_MS);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [selectedStudentId, overrideKey, targetGPA]);
 
   const allIds = useMemo(() => {
     const ids = rows.map((row) => row.id || '').filter(Boolean);
@@ -82,6 +101,7 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
     schemaValid,
     missingColumns,
     lastSyncedAt,
+    lastUpdatedAt,
     allIds,
     rankedStudents: leaderboard,
     studentLookup,
