@@ -28,11 +28,18 @@ const gradeToPoints = (grade) => {
   if (!grade) return null;
   return GRADE_SCALE.find((entry) => entry.label === grade)?.points ?? null;
 };
+const normalizeGradeLabel = (grade) => String(grade ?? '').trim().toUpperCase();
+const REPEAT_ELIGIBLE_GRADES = new Set(['C-', 'D+', 'D', 'E']);
+const REPEAT_CAP_GRADES = new Set(['C', 'C-', 'D+', 'D', 'E']);
+const isRepeatEligibleGrade = (grade) => REPEAT_ELIGIBLE_GRADES.has(normalizeGradeLabel(grade));
+const isRepeatCapGrade = (grade) => REPEAT_CAP_GRADES.has(normalizeGradeLabel(grade));
+const repeatGradeOptions = GRADE_SCALE.filter((g) => REPEAT_CAP_GRADES.has(g.label));
 
 export default function App() {
   const [studentId, setStudentId] = useState('');
   const [userGrades, setUserGrades]   = useState({});
   const [whatIfGrades, setWhatIfGrades] = useState({});
+  const [whatIfRepeats, setWhatIfRepeats] = useState({});
   const [activeTab, setActiveTab]     = useState('results');
   const [subjectChartType, setSubjectChartType] = useState('bar');
   const targetGPA = 3.7;
@@ -66,12 +73,30 @@ export default function App() {
   const setWhatIfGrade = (code, grade) =>
     setWhatIfGrades((prev) => ({ ...prev, [code]: grade }));
 
+  const setWhatIfRepeat = (code, enabled) =>
+    setWhatIfRepeats((prev) => {
+      const next = { ...prev, [code]: enabled };
+      if (!enabled) {
+        setWhatIfGrades((grades) => ({ ...grades, [code]: '' }));
+      }
+      return next;
+    });
+
   const remainingCourses = useMemo(() => {
     const semesters = selectedStudent?.stats?.semesters || [];
     return semesters.flatMap((sem) =>
       (sem?.courses || []).filter((course) => !course.nonGPA && course.points === null)
     );
   }, [selectedStudent]);
+
+  const repeatEligibleCourses = useMemo(() => {
+    const semesters = selectedStudent?.stats?.semesters || [];
+    return semesters.flatMap((sem) =>
+      (sem?.courses || []).filter((course) => !course.nonGPA && course.points !== null && isRepeatEligibleGrade(course.grade))
+    );
+  }, [selectedStudent]);
+
+  const whatIfCourses = useMemo(() => [...remainingCourses, ...repeatEligibleCourses], [remainingCourses, repeatEligibleCourses]);
 
   const whatIfSimulation = useMemo(() => {
     if (!selectedStudent) return { currentGpa: null, projectedGpa: null, selectedCredits: 0, selectedEntries: [], delta: null };
@@ -84,7 +109,7 @@ export default function App() {
     const currentQuality = gradedCourses.reduce((sum, course) => sum + course.points * course.credits, 0);
     const currentCredits = gradedCourses.reduce((sum, course) => sum + course.credits, 0);
 
-    const selectedEntries = remainingCourses
+    const remainingEntries = remainingCourses
       .map((course) => ({
         ...course,
         selectedGrade: whatIfGrades[course.code] || '',
@@ -92,11 +117,22 @@ export default function App() {
       }))
       .filter((course) => course.selectedGrade);
 
-    const selectedQuality = selectedEntries.reduce((sum, course) => sum + (course.selectedPoints ?? 0) * course.credits, 0);
-    const selectedCredits = selectedEntries.reduce((sum, course) => sum + course.credits, 0);
+    const repeatEntries = repeatEligibleCourses
+      .map((course) => ({
+        ...course,
+        selectedGrade: whatIfGrades[course.code] || '',
+        selectedPoints: gradeToPoints(whatIfGrades[course.code]),
+        repeatSelected: Boolean(whatIfRepeats[course.code] && whatIfGrades[course.code]),
+      }))
+      .filter((course) => course.repeatSelected);
 
-    const projectedQuality = currentQuality + selectedQuality;
-    const projectedCredits = currentCredits + selectedCredits;
+    const remainingQuality = remainingEntries.reduce((sum, course) => sum + (course.selectedPoints ?? 0) * course.credits, 0);
+    const remainingCredits = remainingEntries.reduce((sum, course) => sum + course.credits, 0);
+    const repeatQualityAdjustment = repeatEntries.reduce((sum, course) => sum + ((course.selectedPoints ?? 0) - course.points) * course.credits, 0);
+    const repeatCredits = repeatEntries.reduce((sum, course) => sum + course.credits, 0);
+
+    const projectedQuality = currentQuality + remainingQuality + repeatQualityAdjustment;
+    const projectedCredits = currentCredits + remainingCredits;
     const currentGpa = currentCredits > 0 ? round(currentQuality / currentCredits) : null;
     const projectedGpa = projectedCredits > 0 ? round(projectedQuality / projectedCredits) : null;
     const delta = currentGpa !== null && projectedGpa !== null ? round(projectedGpa - currentGpa) : null;
@@ -104,11 +140,11 @@ export default function App() {
     return {
       currentGpa,
       projectedGpa,
-      selectedCredits,
-      selectedEntries,
+      selectedCredits: remainingCredits,
+      selectedEntries: [...remainingEntries, ...repeatEntries],
       delta,
     };
-  }, [selectedStudent, remainingCourses, whatIfGrades]);
+  }, [selectedStudent, remainingCourses, repeatEligibleCourses, whatIfGrades, whatIfRepeats]);
 
   const batchSemesterAverages = useMemo(() => {
     const students = batchStats?.students || [];
@@ -158,6 +194,7 @@ export default function App() {
 
   useEffect(() => {
     setWhatIfGrades({});
+    setWhatIfRepeats({});
   }, [selectedStudent?.id]);
 
   const batchGpaDiff = overall.gpa !== null && batchAverageGpa !== null
@@ -166,6 +203,7 @@ export default function App() {
 
   const handleResetWhatIf = () => {
     setWhatIfGrades({});
+    setWhatIfRepeats({});
   };
 
   const handleSelectStudent = (id) => {
@@ -345,74 +383,7 @@ export default function App() {
                   </div>
                 </Card>
 
-                <Card>
-                  <CardHeader title="What If?" subtitle="Simulate remaining credits with target grades" />
-                  <div style={{ padding: '20px 24px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-                      {[
-                        { label: 'Current GPA', value: formatNumber(whatIfSimulation.currentGpa), color: '#60a5fa' },
-                        { label: 'Selected Credits', value: `${whatIfSimulation.selectedCredits}C`, color: '#a78bfa' },
-                        { label: 'Projected GPA', value: whatIfSimulation.projectedGpa !== null ? formatNumber(whatIfSimulation.projectedGpa, 3) : '-', color: '#fbbf24' },
-                        { label: 'GPA Change', value: whatIfSimulation.delta !== null ? `${whatIfSimulation.delta >= 0 ? '+' : ''}${formatNumber(whatIfSimulation.delta, 3)}` : '-', color: whatIfSimulation.delta >= 0 ? '#10b981' : '#f87171' },
-                      ].map((item) => (
-                        <div key={item.label} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
-                          <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{item.label}</div>
-                          <div style={{ fontSize: 24, fontWeight: 700, color: item.color, marginTop: 8 }}>{item.value}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ marginTop: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                      <div style={{ fontSize: 12, color: T.sub }}>Choose grades for your remaining GPA subjects to preview the impact on your cumulative performance.</div>
-                      <button
-                        type="button"
-                        onClick={handleResetWhatIf}
-                        style={{ background: '#1e2236', border: '1px solid #2d3148', color: '#c7d2fe', borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 12 }}
-                      >
-                        Reset selections
-                      </button>
-                    </div>
-                    <div style={{ overflowX: 'auto', marginTop: 16 }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                            {['Course', 'Credits', 'Select Grade', 'Projected Points'].map((h) => (
-                              <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: T.dim, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600 }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {remainingCourses.length === 0 ? (
-                            <tr>
-                              <td colSpan={4} style={{ padding: '18px 14px', fontSize: 13, color: T.muted }}>No remaining GPA subjects available for simulation.</td>
-                            </tr>
-                          ) : remainingCourses.map((course, idx) => {
-                            const selectedGrade = whatIfGrades[course.code] || '';
-                            const selectedPoints = gradeToPoints(selectedGrade);
-                            return (
-                              <tr key={course.code} style={{ borderBottom: `1px solid ${T.border}22`, background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
-                                <td style={{ padding: '10px 14px', fontSize: 12, color: T.text }}>{course.code} · {course.name}</td>
-                                <td style={{ padding: '10px 14px', fontSize: 12, color: T.sub }}>{course.credits}C</td>
-                                <td style={{ padding: '10px 14px' }}>
-                                  <select
-                                    value={selectedGrade}
-                                    onChange={(e) => setWhatIfGrade(course.code, e.target.value)}
-                                    style={{ background: selectedGrade ? `${gradeColor(selectedGrade)}22` : '#0f1117', border: `1px solid ${selectedGrade ? `${gradeColor(selectedGrade)}66` : T.border}`, borderRadius: 6, color: selectedGrade ? gradeColor(selectedGrade) : T.muted, padding: '6px 10px', outline: 'none', cursor: 'pointer' }}
-                                  >
-                                    <option value="">Select</option>
-                                    {GRADE_SCALE.map((g) => <option key={g.label} value={g.label}>{g.label}</option>)}
-                                  </select>
-                                </td>
-                                <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: selectedPoints !== null ? gradeColor(selectedGrade) : T.border }}>
-                                  {selectedPoints !== null ? formatNumber(selectedPoints, 2) : '-'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </Card>
+                {/* removed What If from Results; it now appears under Forecast */}
 
                 {levelOneSemesters.map((sem) => (
                   <Card key={sem.key}>
@@ -528,6 +499,133 @@ export default function App() {
                         </div>
                       </div>
                     )}
+                  </div>
+                </Card>
+
+                <Card>
+                  <CardHeader title="What If?" subtitle="Simulate remaining and repeat-eligible grades" />
+                  <div style={{ padding: '20px 24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                      {[
+                        { label: 'Current GPA', value: formatNumber(whatIfSimulation.currentGpa), color: '#60a5fa' },
+                        { label: 'Selected Credits', value: `${whatIfSimulation.selectedCredits}C`, color: '#a78bfa' },
+                        { label: 'Projected GPA', value: whatIfSimulation.projectedGpa !== null ? formatNumber(whatIfSimulation.projectedGpa, 3) : '-', color: '#fbbf24' },
+                        { label: 'GPA Change', value: whatIfSimulation.delta !== null ? `${whatIfSimulation.delta >= 0 ? '+' : ''}${formatNumber(whatIfSimulation.delta, 3)}` : '-', color: whatIfSimulation.delta >= 0 ? '#10b981' : '#f87171' },
+                      ].map((item) => (
+                        <div key={item.label} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                          <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{item.label}</div>
+                          <div style={{ fontSize: 24, fontWeight: 700, color: item.color, marginTop: 8 }}>{item.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 12, color: T.sub }}>Choose grades for your remaining GPA subjects and repeat-eligible courses to preview the impact on your cumulative GPA.</div>
+                      <button
+                        type="button"
+                        onClick={handleResetWhatIf}
+                        style={{ background: '#1e2236', border: '1px solid #2d3148', color: '#c7d2fe', borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 12 }}
+                      >
+                        Reset selections
+                      </button>
+                    </div>
+
+                    <div style={{ overflowX: 'auto', marginTop: 16 }}>
+                      <div style={{ marginBottom: 18 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Remaining GPA subjects</div>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                              {['Course', 'Credits', 'Select Grade', 'Projected Points'].map((h) => (
+                                <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: T.dim, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600 }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {remainingCourses.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} style={{ padding: '18px 14px', fontSize: 13, color: T.muted }}>No remaining GPA subjects available for simulation.</td>
+                              </tr>
+                            ) : remainingCourses.map((course, idx) => {
+                              const selectedGrade = whatIfGrades[course.code] || '';
+                              const selectedPoints = gradeToPoints(selectedGrade);
+                              return (
+                                <tr key={course.code} style={{ borderBottom: `1px solid ${T.border}22`, background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
+                                  <td style={{ padding: '10px 14px', fontSize: 12, color: T.text }}>{course.code} · {course.name}</td>
+                                  <td style={{ padding: '10px 14px', fontSize: 12, color: T.sub }}>{course.credits}C</td>
+                                  <td style={{ padding: '10px 14px' }}>
+                                    <select
+                                      value={selectedGrade}
+                                      onChange={(e) => setWhatIfGrade(course.code, e.target.value)}
+                                      style={{ background: selectedGrade ? `${gradeColor(selectedGrade)}22` : '#0f1117', border: `1px solid ${selectedGrade ? `${gradeColor(selectedGrade)}66` : T.border}`, borderRadius: 6, color: selectedGrade ? gradeColor(selectedGrade) : T.muted, padding: '6px 10px', outline: 'none', cursor: 'pointer' }}
+                                    >
+                                      <option value="">Select</option>
+                                      {GRADE_SCALE.map((g) => <option key={g.label} value={g.label}>{g.label}</option>)}
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: selectedPoints !== null ? gradeColor(selectedGrade) : T.border }}>
+                                    {selectedPoints !== null ? formatNumber(selectedPoints, 2) : '-'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {repeatEligibleCourses.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Repeat-eligible courses (C-/D+/D/E)</div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                                {['Course', 'Current Grade', 'Credits', 'Repeat?', 'Select Repeat Grade', 'Projected Points'].map((h) => (
+                                  <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: T.dim, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600 }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {repeatEligibleCourses.map((course, idx) => {
+                                const repeatSelected = Boolean(whatIfRepeats[course.code]);
+                                const selectedGrade = whatIfGrades[course.code] || '';
+                                const selectedPoints = gradeToPoints(selectedGrade);
+                                return (
+                                  <tr key={course.code} style={{ borderBottom: `1px solid ${T.border}22`, background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
+                                    <td style={{ padding: '10px 14px', fontSize: 12, color: T.text }}>{course.code} · {course.name}</td>
+                                    <td style={{ padding: '10px 14px', fontSize: 12, color: gradeColor(course.grade) }}>{course.grade}</td>
+                                    <td style={{ padding: '10px 14px', fontSize: 12, color: T.sub }}>{course.credits}C</td>
+                                    <td style={{ padding: '10px 14px' }}>
+                                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={repeatSelected}
+                                          onChange={(e) => setWhatIfRepeat(course.code, e.target.checked)}
+                                          style={{ width: 16, height: 16, accentColor: '#6366f1' }}
+                                        />
+                                        <span style={{ color: T.text }}>Repeat</span>
+                                      </label>
+                                    </td>
+                                    <td style={{ padding: '10px 14px' }}>
+                                      <select
+                                        value={selectedGrade}
+                                        disabled={!repeatSelected}
+                                        onChange={(e) => setWhatIfGrade(course.code, e.target.value)}
+                                        style={{ background: repeatSelected ? (selectedGrade ? `${gradeColor(selectedGrade)}22` : '#0f1117') : '#111827', border: `1px solid ${repeatSelected ? (selectedGrade ? `${gradeColor(selectedGrade)}66` : T.border) : '#2d3148'}`, borderRadius: 6, color: repeatSelected ? (selectedGrade ? gradeColor(selectedGrade) : T.muted) : T.muted, padding: '6px 10px', outline: 'none', cursor: repeatSelected ? 'pointer' : 'not-allowed' }}
+                                      >
+                                        <option value="">Select</option>
+                                        {repeatGradeOptions.map((g) => <option key={g.label} value={g.label}>{g.label}</option>)}
+                                      </select>
+                                    </td>
+                                    <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: repeatSelected && selectedPoints !== null ? gradeColor(selectedGrade) : T.border }}>
+                                      {repeatSelected && selectedPoints !== null ? formatNumber(selectedPoints, 2) : '-'}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </Card>
 
