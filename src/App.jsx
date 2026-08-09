@@ -54,6 +54,11 @@ export default function App() {
   const semesterChartData = selectedStudent?.charts?.semesterTrend || [];
   const subjectChartData  = selectedStudent?.charts?.subjectComparison || [];
   const histogramData     = batchStats?.distribution || [];
+  const batchAverageGpa   = typeof batchStats?.averageGpa === 'number' ? batchStats.averageGpa : null;
+  const batchMedianGpa    = typeof batchStats?.medianGpa === 'number' ? batchStats.medianGpa : null;
+  const batchPassRate     = typeof batchStats?.passRate === 'number' ? batchStats.passRate : null;
+  const batchFailRate     = typeof batchStats?.failRate === 'number' ? batchStats.failRate : null;
+  const batchDataAvailable = batchStats !== null && typeof batchStats === 'object';
 
   const setGrade = (code, grade) =>
     setUserGrades((prev) => ({ ...prev, [code]: grade }));
@@ -62,17 +67,18 @@ export default function App() {
     setWhatIfGrades((prev) => ({ ...prev, [code]: grade }));
 
   const remainingCourses = useMemo(() => {
-    if (!selectedStudent) return [];
-    return selectedStudent.stats.semesters.flatMap((sem) =>
-      sem.courses.filter((course) => !course.nonGPA && course.points === null)
+    const semesters = selectedStudent?.stats?.semesters || [];
+    return semesters.flatMap((sem) =>
+      (sem?.courses || []).filter((course) => !course.nonGPA && course.points === null)
     );
   }, [selectedStudent]);
 
   const whatIfSimulation = useMemo(() => {
     if (!selectedStudent) return { currentGpa: null, projectedGpa: null, selectedCredits: 0, selectedEntries: [], delta: null };
 
-    const gradedCourses = selectedStudent.stats.semesters.flatMap((sem) =>
-      sem.courses.filter((course) => !course.nonGPA && course.points !== null)
+    const semesters = selectedStudent?.stats?.semesters || [];
+    const gradedCourses = semesters.flatMap((sem) =>
+      (sem?.courses || []).filter((course) => !course.nonGPA && course.points !== null)
     );
 
     const currentQuality = gradedCourses.reduce((sum, course) => sum + course.points * course.credits, 0);
@@ -124,8 +130,8 @@ export default function App() {
   }, [batchStats?.students, selectedStudent?.id]);
 
   const semesterComparisonRows = useMemo(() => {
-    if (!selectedStudent) return [];
-    return selectedStudent.stats.semesters.map((sem) => {
+    const semesters = selectedStudent?.stats?.semesters || [];
+    return semesters.map((sem) => {
       const batchAvg = batchSemesterAverages[sem.key] ?? null;
       const diff = sem.gpa !== null && batchAvg !== null ? round(sem.gpa - batchAvg) : null;
       return {
@@ -154,8 +160,8 @@ export default function App() {
     setWhatIfGrades({});
   }, [selectedStudent?.id]);
 
-  const batchGpaDiff = overall.gpa !== null && batchStats?.averageGpa !== null
-    ? round(overall.gpa - batchStats.averageGpa)
+  const batchGpaDiff = overall.gpa !== null && batchAverageGpa !== null
+    ? round(overall.gpa - batchAverageGpa)
     : null;
 
   const handleResetWhatIf = () => {
@@ -253,7 +259,7 @@ export default function App() {
               { label: 'Overall GPA',    value: formatNumber(overall.gpa), color: classification.color || '#475569', sub: classification.label || 'N/A' },
               { label: 'Batch Rank',     value: stats.rank ? `${stats.rank} / ${stats.rankedStudentCount}` : '-', color: '#6366f1', sub: 'of graded students' },
               { label: 'Percentile',     value: formatPercent(stats.percentile), color: '#10b981', sub: 'relative standing' },
-              { label: 'Batch Avg GPA',  value: formatNumber(batchStats?.averageGpa), color: '#f59e0b', sub: 'for comparison' },
+              { label: 'Batch Avg GPA',  value: batchAverageGpa !== null ? formatNumber(batchAverageGpa) : 'Batch average unavailable', color: '#f59e0b', sub: 'for comparison' },
               { label: 'Credits Earned', value: overall.credits ?? 0, color: '#60a5fa', sub: `of ${stats.gpaCreditTotal} GPA credits` },
               { label: 'Forecast Status', value: forecast.status === 'guaranteed' ? 'Secured' : forecast.status === 'impossible' ? 'Impossible' : 'Open', color: forecast.status === 'guaranteed' ? '#10b981' : forecast.status === 'impossible' ? '#f87171' : '#6366f1', sub: 'First Class forecast' },
             ]} />
@@ -316,8 +322,8 @@ export default function App() {
                   <div style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                     {[
                       { label: 'Your GPA', value: formatNumber(overall.gpa), color: '#60a5fa' },
-                      { label: 'Batch GPA', value: formatNumber(batchStats?.averageGpa), color: '#f59e0b' },
-                      { label: 'Difference', value: batchGpaDiff !== null ? `${batchGpaDiff >= 0 ? '+' : ''}${formatNumber(batchGpaDiff)}` : '-', color: batchGpaDiff >= 0 ? '#10b981' : '#f87171' },
+                      { label: 'Batch GPA', value: batchAverageGpa !== null ? formatNumber(batchAverageGpa) : 'Unavailable', color: '#f59e0b' },
+                      { label: 'Difference', value: batchGpaDiff !== null ? `${batchGpaDiff >= 0 ? '+' : ''}${formatNumber(batchGpaDiff)}` : 'Unavailable', color: batchGpaDiff !== null ? (batchGpaDiff >= 0 ? '#10b981' : '#f87171') : T.sub },
                     ].map((item) => (
                       <div key={item.label} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
                         <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{item.label}</div>
@@ -550,7 +556,7 @@ export default function App() {
                 <Card>
                   <CardHeader title="Batch GPA Distribution" subtitle="Overall GPA across all students" />
                   <div style={{ padding: '16px 20px 8px' }}>
-                    <BatchDistributionChart data={histogramData} currentGPA={overall.gpa ?? null} avgGPA={batchStats?.averageGpa ?? null} />
+                    <BatchDistributionChart data={histogramData} currentGPA={overall.gpa ?? null} avgGPA={batchAverageGpa} />
                   </div>
                 </Card>
                 <Card>
@@ -613,10 +619,10 @@ export default function App() {
                   <CardHeader title="Batch Analytics" subtitle="Summary metrics" />
                   <div style={{ padding: '16px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
                     {[
-                      { label: 'Average GPA', value: formatNumber(batchStats?.averageGpa), color: '#fbbf24' },
-                      { label: 'Median GPA',  value: formatNumber(batchStats?.medianGpa),  color: '#6366f1' },
-                      { label: 'Pass Rate',   value: formatPercent(batchStats?.passRate, 1), color: '#10b981' },
-                      { label: 'Fail Rate',   value: formatPercent(batchStats?.failRate, 1), color: '#f87171' },
+                      { label: 'Average GPA', value: batchAverageGpa !== null ? formatNumber(batchAverageGpa) : 'Unavailable', color: '#fbbf24' },
+                      { label: 'Median GPA',  value: batchMedianGpa !== null ? formatNumber(batchMedianGpa) : 'Unavailable', color: '#6366f1' },
+                      { label: 'Pass Rate',   value: batchPassRate !== null ? formatPercent(batchPassRate, 1) : 'Unavailable', color: '#10b981' },
+                      { label: 'Fail Rate',   value: batchFailRate !== null ? formatPercent(batchFailRate, 1) : 'Unavailable', color: '#f87171' },
                     ].map((m) => (
                       <div key={m.label} style={{ background: '#0f1117', borderRadius: 10, padding: 12 }}>
                         <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{m.label}</div>
