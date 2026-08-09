@@ -21,8 +21,11 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
   const overrides = options.overrides || {};
   const overrideKey = useMemo(() => JSON.stringify(overrides), [overrides]);
   const intervalRef = useRef(null);
+  const activeFetchRef = useRef(false);
 
   const loadData = async (isMounted = () => true) => {
+    if (activeFetchRef.current) return;
+    activeFetchRef.current = true;
     setLoading(true);
     setError(null);
 
@@ -48,6 +51,7 @@ export const useDashboardData = (selectedStudentId = '', options = {}) => {
       if (!isMounted()) return;
       setError(err.message || DEFAULT_ERROR_MESSAGE);
     } finally {
+      activeFetchRef.current = false;
       if (isMounted()) setLoading(false);
     }
   };

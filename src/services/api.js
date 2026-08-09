@@ -246,6 +246,20 @@ const buildForecast = (overallGpa, earnedCredits, targetGpa) => {
   return { targetGPA: targetGpa, remainingCredits: remaining, neededPerCredit, scenarios };
 };
 
+const getLevelProgress = (semesterGroups) => {
+  return ['Level I', 'Level II', 'Level III'].map((level) => {
+    const groups = semesterGroups.filter((group) => group.level === level);
+    const totalCredits = groups.reduce((sum, group) => sum + (group.totalCredits ?? 0), 0);
+    const earnedCredits = groups.reduce((sum, group) => sum + (group.credits ?? 0), 0);
+    return {
+      label: level,
+      credits: totalCredits,
+      earned: earnedCredits,
+      percent: totalCredits > 0 ? round(Math.min(100, (earnedCredits / totalCredits) * 100), 0) : 0,
+    };
+  });
+};
+
 // ── Build one student payload ─────────────────────────────────────────────────
 
 const buildStudentPayload = (row, targetGpa = 3.7) => {
@@ -334,6 +348,7 @@ const buildStudentPayload = (row, targetGpa = 3.7) => {
 
   const degreeCredits = 90;
   const gpaCreditTotal = 88;
+  const levelProgress = getLevelProgress(semesterGroups);
 
   return {
     id,
@@ -356,6 +371,7 @@ const buildStudentPayload = (row, targetGpa = 3.7) => {
         { label: 'Level III', credits: 30, earned: 0, percent: 0 },
       ],
       forecast,
+      levelProgress,
     },
     analytics: {
       strongestSubject,
@@ -381,14 +397,26 @@ const buildStudentPayload = (row, targetGpa = 3.7) => {
 const buildBatchPayload = (rows, targetGpa = 3.7) => {
   const validStudents = rows.map((row) => buildStudentPayload(row, targetGpa)).filter(Boolean);
 
+  const idCounts = new Map();
+  const uniqueStudents = validStudents.map((student) => {
+    const count = idCounts.get(student.id) ?? 0;
+    idCounts.set(student.id, count + 1);
+    return {
+      ...student,
+      originalId: student.id,
+      id: count > 0 ? `${student.id} (${count + 1})` : student.id,
+      duplicateRegistrationId: count > 0,
+    };
+  });
+
   // Apply ranks
-  const withGpa = validStudents.filter((s) => s.gpa !== null);
+  const withGpa = uniqueStudents.filter((s) => s.gpa !== null);
   withGpa.sort((a, b) => b.gpa - a.gpa || a.id.localeCompare(b.id));
   const rankMap = new Map(
     withGpa.map((s, i) => [s.id, { rank: i + 1, percentile: round(((withGpa.length - i - 1) / withGpa.length) * 100, 0) }])
   );
 
-  const rankedStudents = validStudents.map((s) => {
+  const rankedStudents = uniqueStudents.map((s) => {
     const r = rankMap.get(s.id) || { rank: null, percentile: null };
     const semesterGpas = s.stats.semesters.reduce((acc, sem) => {
       const canonical = getCanonicalSemesterKey(sem.level, sem.label);
