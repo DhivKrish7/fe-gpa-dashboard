@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DashboardHeader } from './components/layout/DashboardHeader';
 import { StudentSelector } from './components/dashboard/StudentSelector';
 import { KpiGrid } from './components/dashboard/KpiGrid';
@@ -20,10 +20,19 @@ const T = {
 const gradeColor   = (grade) => GRADE_COLORS[grade] || '#475569';
 const formatNumber = (value, digits = 3) => (value !== null && value !== undefined ? Number(value).toFixed(digits) : '-');
 const formatPercent = (value, digits = 0) => (value !== null && value !== undefined ? `${Number(value).toFixed(digits)}%` : '-');
+const round = (value, digits = 3) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  return Number(Number(value).toFixed(digits));
+};
+const gradeToPoints = (grade) => {
+  if (!grade) return null;
+  return GRADE_SCALE.find((entry) => entry.label === grade)?.points ?? null;
+};
 
 export default function App() {
   const [studentId, setStudentId] = useState('');
   const [userGrades, setUserGrades]   = useState({});
+  const [whatIfGrades, setWhatIfGrades] = useState({});
   const [activeTab, setActiveTab]     = useState('results');
   const [subjectChartType, setSubjectChartType] = useState('bar');
   const targetGPA = 3.7;
@@ -48,6 +57,110 @@ export default function App() {
 
   const setGrade = (code, grade) =>
     setUserGrades((prev) => ({ ...prev, [code]: grade }));
+
+  const setWhatIfGrade = (code, grade) =>
+    setWhatIfGrades((prev) => ({ ...prev, [code]: grade }));
+
+  const remainingCourses = useMemo(() => {
+    if (!selectedStudent) return [];
+    return selectedStudent.stats.semesters.flatMap((sem) =>
+      sem.courses.filter((course) => !course.nonGPA && course.points === null)
+    );
+  }, [selectedStudent]);
+
+  const whatIfSimulation = useMemo(() => {
+    if (!selectedStudent) return { currentGpa: null, projectedGpa: null, selectedCredits: 0, selectedEntries: [], delta: null };
+
+    const gradedCourses = selectedStudent.stats.semesters.flatMap((sem) =>
+      sem.courses.filter((course) => !course.nonGPA && course.points !== null)
+    );
+
+    const currentQuality = gradedCourses.reduce((sum, course) => sum + course.points * course.credits, 0);
+    const currentCredits = gradedCourses.reduce((sum, course) => sum + course.credits, 0);
+
+    const selectedEntries = remainingCourses
+      .map((course) => ({
+        ...course,
+        selectedGrade: whatIfGrades[course.code] || '',
+        selectedPoints: gradeToPoints(whatIfGrades[course.code]),
+      }))
+      .filter((course) => course.selectedGrade);
+
+    const selectedQuality = selectedEntries.reduce((sum, course) => sum + (course.selectedPoints ?? 0) * course.credits, 0);
+    const selectedCredits = selectedEntries.reduce((sum, course) => sum + course.credits, 0);
+
+    const projectedQuality = currentQuality + selectedQuality;
+    const projectedCredits = currentCredits + selectedCredits;
+    const currentGpa = currentCredits > 0 ? round(currentQuality / currentCredits) : null;
+    const projectedGpa = projectedCredits > 0 ? round(projectedQuality / projectedCredits) : null;
+    const delta = currentGpa !== null && projectedGpa !== null ? round(projectedGpa - currentGpa) : null;
+
+    return {
+      currentGpa,
+      projectedGpa,
+      selectedCredits,
+      selectedEntries,
+      delta,
+    };
+  }, [selectedStudent, remainingCourses, whatIfGrades]);
+
+  const batchSemesterAverages = useMemo(() => {
+    const students = batchStats?.students || [];
+    const totals = {};
+    const counts = {};
+    students.forEach((student) => {
+      if (!selectedStudent || student.id === selectedStudent.id) return;
+      const semesterGpas = student.semesterGpas || {};
+      Object.entries(semesterGpas).forEach(([key, gpa]) => {
+        if (gpa !== null && gpa !== undefined) {
+          totals[key] = (totals[key] || 0) + gpa;
+          counts[key] = (counts[key] || 0) + 1;
+        }
+      });
+    });
+    return Object.fromEntries(
+      Object.entries(totals).map(([key, total]) => [key, round(total / counts[key])])
+    );
+  }, [batchStats?.students, selectedStudent?.id]);
+
+  const semesterComparisonRows = useMemo(() => {
+    if (!selectedStudent) return [];
+    return selectedStudent.stats.semesters.map((sem) => {
+      const batchAvg = batchSemesterAverages[sem.key] ?? null;
+      const diff = sem.gpa !== null && batchAvg !== null ? round(sem.gpa - batchAvg) : null;
+      return {
+        key: sem.key,
+        label: sem.label,
+        studentGpa: sem.gpa,
+        batchAvg,
+        diff,
+      };
+    });
+  }, [selectedStudent, batchSemesterAverages]);
+
+  const subjectRelativeInsights = useMemo(() => {
+    const comparisons = subjectChartData
+      .filter((item) => item.me !== null && item.batch !== null)
+      .map((item) => ({ ...item, diff: round(item.me - item.batch) }));
+
+    if (!comparisons.length) return { best: null, worst: null };
+
+    const best = comparisons.reduce((acc, item) => (acc === null || item.diff > acc.diff ? item : acc), null);
+    const worst = comparisons.reduce((acc, item) => (acc === null || item.diff < acc.diff ? item : acc), null);
+    return { best, worst };
+  }, [subjectChartData]);
+
+  useEffect(() => {
+    setWhatIfGrades({});
+  }, [selectedStudent?.id]);
+
+  const batchGpaDiff = overall.gpa !== null && batchStats?.averageGpa !== null
+    ? round(overall.gpa - batchStats.averageGpa)
+    : null;
+
+  const handleResetWhatIf = () => {
+    setWhatIfGrades({});
+  };
 
   const handleSelectStudent = (id) => {
     setStudentId(id);
@@ -195,6 +308,103 @@ export default function App() {
                         <div style={{ fontSize: 16, fontWeight: 700, color: item.color, marginTop: 4 }}>{item.value}</div>
                       </div>
                     ))}
+                  </div>
+                </Card>
+
+                <Card>
+                  <CardHeader title="You vs Batch" subtitle="Your GPA against the cohort" />
+                  <div style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                    {[
+                      { label: 'Your GPA', value: formatNumber(overall.gpa), color: '#60a5fa' },
+                      { label: 'Batch GPA', value: formatNumber(batchStats?.averageGpa), color: '#f59e0b' },
+                      { label: 'Difference', value: batchGpaDiff !== null ? `${batchGpaDiff >= 0 ? '+' : ''}${formatNumber(batchGpaDiff)}` : '-', color: batchGpaDiff >= 0 ? '#10b981' : '#f87171' },
+                    ].map((item) => (
+                      <div key={item.label} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                        <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{item.label}</div>
+                        <div style={{ fontSize: 24, fontWeight: 700, color: item.color, marginTop: 8 }}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 18 }}>
+                    <div style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>Best Relative Subject</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#10b981', marginTop: 8 }}>{subjectRelativeInsights.best?.name || '-'}</div>
+                      <div style={{ fontSize: 12, color: T.sub, marginTop: 6 }}>{subjectRelativeInsights.best ? `${subjectRelativeInsights.best.diff >= 0 ? '+' : ''}${subjectRelativeInsights.best.diff} above batch` : 'No comparison data'}</div>
+                    </div>
+                    <div style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>Most Challenging Subject</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#f87171', marginTop: 8 }}>{subjectRelativeInsights.worst?.name || '-'}</div>
+                      <div style={{ fontSize: 12, color: T.sub, marginTop: 6 }}>{subjectRelativeInsights.worst ? `${subjectRelativeInsights.worst.diff >= 0 ? '+' : ''}${subjectRelativeInsights.worst.diff} vs batch` : 'No comparison data'}</div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card>
+                  <CardHeader title="What If?" subtitle="Simulate remaining credits with target grades" />
+                  <div style={{ padding: '20px 24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                      {[
+                        { label: 'Current GPA', value: formatNumber(whatIfSimulation.currentGpa), color: '#60a5fa' },
+                        { label: 'Selected Credits', value: `${whatIfSimulation.selectedCredits}C`, color: '#a78bfa' },
+                        { label: 'Projected GPA', value: whatIfSimulation.projectedGpa !== null ? formatNumber(whatIfSimulation.projectedGpa, 3) : '-', color: '#fbbf24' },
+                        { label: 'GPA Change', value: whatIfSimulation.delta !== null ? `${whatIfSimulation.delta >= 0 ? '+' : ''}${formatNumber(whatIfSimulation.delta, 3)}` : '-', color: whatIfSimulation.delta >= 0 ? '#10b981' : '#f87171' },
+                      ].map((item) => (
+                        <div key={item.label} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                          <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{item.label}</div>
+                          <div style={{ fontSize: 24, fontWeight: 700, color: item.color, marginTop: 8 }}>{item.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 12, color: T.sub }}>Choose grades for your remaining GPA subjects to preview the impact on your cumulative performance.</div>
+                      <button
+                        type="button"
+                        onClick={handleResetWhatIf}
+                        style={{ background: '#1e2236', border: '1px solid #2d3148', color: '#c7d2fe', borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 12 }}
+                      >
+                        Reset selections
+                      </button>
+                    </div>
+                    <div style={{ overflowX: 'auto', marginTop: 16 }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                            {['Course', 'Credits', 'Select Grade', 'Projected Points'].map((h) => (
+                              <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: T.dim, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {remainingCourses.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} style={{ padding: '18px 14px', fontSize: 13, color: T.muted }}>No remaining GPA subjects available for simulation.</td>
+                            </tr>
+                          ) : remainingCourses.map((course, idx) => {
+                            const selectedGrade = whatIfGrades[course.code] || '';
+                            const selectedPoints = gradeToPoints(selectedGrade);
+                            return (
+                              <tr key={course.code} style={{ borderBottom: `1px solid ${T.border}22`, background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
+                                <td style={{ padding: '10px 14px', fontSize: 12, color: T.text }}>{course.code} · {course.name}</td>
+                                <td style={{ padding: '10px 14px', fontSize: 12, color: T.sub }}>{course.credits}C</td>
+                                <td style={{ padding: '10px 14px' }}>
+                                  <select
+                                    value={selectedGrade}
+                                    onChange={(e) => setWhatIfGrade(course.code, e.target.value)}
+                                    style={{ background: selectedGrade ? `${gradeColor(selectedGrade)}22` : '#0f1117', border: `1px solid ${selectedGrade ? `${gradeColor(selectedGrade)}66` : T.border}`, borderRadius: 6, color: selectedGrade ? gradeColor(selectedGrade) : T.muted, padding: '6px 10px', outline: 'none', cursor: 'pointer' }}
+                                  >
+                                    <option value="">Select</option>
+                                    {GRADE_SCALE.map((g) => <option key={g.label} value={g.label}>{g.label}</option>)}
+                                  </select>
+                                </td>
+                                <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: selectedPoints !== null ? gradeColor(selectedGrade) : T.border }}>
+                                  {selectedPoints !== null ? formatNumber(selectedPoints, 2) : '-'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </Card>
 
@@ -368,6 +578,35 @@ export default function App() {
                   </CardHeader>
                   <div style={{ padding: '16px 20px 8px' }}>
                     <SubjectComparisonChart data={subjectChartData} type={subjectChartType} />
+                  </div>
+                </Card>
+                <Card>
+                  <CardHeader title="Semester Comparison" subtitle="Your semester GPAs vs cohort averages" />
+                  <div style={{ padding: '16px 20px', overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                          {['Semester', 'Your GPA', 'Batch Avg', 'Difference'].map((h) => (
+                            <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: T.dim, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 600 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {semesterComparisonRows.map((row, idx) => (
+                          <tr key={row.key} style={{ borderBottom: `1px solid ${T.border}22`, background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
+                            <td style={{ padding: '10px 14px', fontSize: 12, color: T.text }}>{row.label}</td>
+                            <td style={{ padding: '10px 14px', fontSize: 12, color: T.text }}>{formatNumber(row.studentGpa)}</td>
+                            <td style={{ padding: '10px 14px', fontSize: 12, color: T.text }}>{formatNumber(row.batchAvg)}</td>
+                            <td style={{ padding: '10px 14px', fontSize: 12, color: row.diff >= 0 ? '#10b981' : '#f87171' }}>{row.diff !== null ? `${row.diff >= 0 ? '+' : ''}${formatNumber(row.diff, 2)}` : '-'}</td>
+                          </tr>
+                        ))}
+                        {semesterComparisonRows.length === 0 && (
+                          <tr>
+                            <td colSpan={4} style={{ padding: '18px 14px', fontSize: 13, color: T.muted }}>Not enough semester data available to compare.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </Card>
                 <Card>

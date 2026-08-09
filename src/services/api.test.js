@@ -181,12 +181,12 @@ describe('fetchBatchStats', () => {
       { code: 'C3', nonGPA: false, points: null, credits: 2 },
     ];
 
-    const forecast = buildForecast(courseRows, 3.85);
+    const forecast = buildForecast(courseRows, 3.7);
 
     expect(forecast.status).toBe('possible');
-    expect(forecast.minimumHighGrades).toBe(1);
-    expect(forecast.projectedGPA).toBeCloseTo(3.914, 3);
-    expect(forecast.examplePath).toEqual(expect.objectContaining({ 'A/A+': 1 }));
+    expect(forecast.minimumHighGrades).toBe(0);
+    expect(forecast.projectedGPA).toBeCloseTo(3.714, 3);
+    expect(forecast.examplePath).toEqual(expect.objectContaining({ 'A-': 1, 'B+': 1 }));
     expect(Object.values(forecast.examplePath).reduce((sum, count) => sum + count, 0)).toBe(2);
     expect(forecast.alternativeScenarios.length).toBeGreaterThanOrEqual(1);
   });
