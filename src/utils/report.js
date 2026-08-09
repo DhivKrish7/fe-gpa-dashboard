@@ -10,7 +10,7 @@ export const buildReportHTML = (student, batchStats) => {
   const stats = student?.stats || {};
   const overall = stats.overall || {};
   const classification = stats.degreeClassification || overall.classification || {};
-  const semesters = (stats.semesters || []).filter((semester) => semester.level === 'Level I');
+  const semesters = (stats.semesters || []).filter((semester) => semester.level !== 'Unknown');
   const rank = stats.rank ? `${stats.rank} / ${stats.rankedStudentCount}` : '-';
 
   return `<!DOCTYPE html>

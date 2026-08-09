@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { fetchBatchStats, buildForecast } from './api';
+import { LEVEL3_FINAL_GROUPS, validateCourseStructure } from '../constants/courses';
 
 const makeFetchResponse = (payload) => ({
   ok: true,
@@ -77,8 +78,167 @@ describe('fetchBatchStats', () => {
     const levelIIProgress = student.stats.levelProgress.find((item) => item.label === 'Level II');
 
     expect(levelIISemesters).toHaveLength(3);
-    expect(levelIISemesters.map((sem) => sem.totalCredits)).toEqual([10, 10, 12]);
-    expect(levelIIProgress).toEqual(expect.objectContaining({ label: 'Level II', credits: 32, earned: 6, percent: 19 }));
+    expect(levelIISemesters.map((sem) => sem.totalCredits)).toEqual([10, 10, 10]);
+    expect(levelIIProgress).toEqual(expect.objectContaining({ label: 'Level II', credits: 30, earned: 6, percent: 20 }));
+  });
+
+  it('validates the authoritative degree structure', () => {
+    expect(validateCourseStructure()).toEqual({ valid: true, issues: [] });
+    expect(LEVEL3_FINAL_GROUPS.map((group) => ({
+      id: group.id,
+      credits: group.courses.reduce((sum, course) => sum + course.credits, 0),
+      subjects: group.courses.length,
+    }))).toEqual([
+      { id: 'financial_analytics', credits: 12, subjects: 3 },
+      { id: 'business_analysis', credits: 12, subjects: 3 },
+      { id: 'business_intelligence_systems', credits: 12, subjects: 3 },
+    ]);
+  });
+
+  it('maps Level III as 10C, 8C, and one 12C final group for Financial Analytics', async () => {
+    fetch.mockResolvedValueOnce(makeFetchResponse([
+      {
+        'Reg ID': '25SFE020',
+        Name: 'Fin',
+        'FE 3021': 'A',
+        'FE 3022': 'A',
+        'FE 3023': 'A',
+        'FE 3024': 'A',
+        'FE 3025': 'A',
+        'FE 3026': 'A',
+        'FE 3027': 'A',
+        'FE 3028': 'A',
+        'FE 3029': 'A',
+        'FE 3030': 'A',
+        'FE 3031': 'A',
+        'FE 3032': 'A',
+      },
+    ]));
+
+    const student = (await fetchBatchStats()).students[0];
+    const levelIIISemesters = student.stats.semesters.filter((sem) => sem.level === 'Level III');
+    const levelIIIProgress = student.stats.levelProgress.find((item) => item.label === 'Level III');
+
+    expect(levelIIISemesters.map((sem) => sem.totalCredits)).toEqual([10, 8, 12]);
+    expect(levelIIISemesters.map((sem) => sem.courses.filter((course) => !course.nonGPA).length)).toEqual([5, 4, 3]);
+    expect(student.stats.specialization.selectedGroupId).toBe('financial_analytics');
+    expect(levelIIIProgress).toEqual(expect.objectContaining({ credits: 30, earned: 30, percent: 100 }));
+    expect(student.stats.overall.credits).toBe(30);
+  });
+
+  it('counts one Level III Business Analysis final group, not all alternatives', async () => {
+    fetch.mockResolvedValueOnce(makeFetchResponse([
+      {
+        'Reg ID': '25SFE021',
+        Name: 'Biz',
+        'FE 3021': 'A',
+        'FE 3022': 'A',
+        'FE 3023': 'A',
+        'FE 3024': 'A',
+        'FE 3025': 'A',
+        'FE 3026': 'A',
+        'FE 3027': 'A',
+        'FE 3028': 'A',
+        'FE 3029': 'A',
+        'FE 3033': 'A',
+        'FE 3034': 'A',
+        'FE 3035': 'A',
+      },
+    ]));
+
+    const student = (await fetchBatchStats()).students[0];
+    const levelIIIProgress = student.stats.levelProgress.find((item) => item.label === 'Level III');
+
+    expect(student.stats.specialization.selectedGroupId).toBe('business_analysis');
+    expect(levelIIIProgress.earned).toBe(30);
+    expect(student.stats.overall.credits).toBe(30);
+    expect(student.stats.semesters.flatMap((sem) => sem.courses).some((course) => course.code === 'FE 3030')).toBe(false);
+  });
+
+  it('counts one Level III Business Intelligence Systems final group, not all alternatives', async () => {
+    fetch.mockResolvedValueOnce(makeFetchResponse([
+      {
+        'Reg ID': '25SFE022',
+        Name: 'Bis',
+        'FE 3021': 'A',
+        'FE 3022': 'A',
+        'FE 3023': 'A',
+        'FE 3024': 'A',
+        'FE 3025': 'A',
+        'FE 3026': 'A',
+        'FE 3027': 'A',
+        'FE 3028': 'A',
+        'FE 3029': 'A',
+        'FE 3036': 'A',
+        'FE 3037': 'A',
+        'FE 3038': 'A',
+      },
+    ]));
+
+    const student = (await fetchBatchStats()).students[0];
+    const levelIIIProgress = student.stats.levelProgress.find((item) => item.label === 'Level III');
+
+    expect(student.stats.specialization.selectedGroupId).toBe('business_intelligence_systems');
+    expect(levelIIIProgress.earned).toBe(30);
+    expect(student.stats.overall.credits).toBe(30);
+    expect(levelIIIProgress.credits).not.toBe(66);
+  });
+
+  it('keeps Level III Semester III neutral until specialization results exist', async () => {
+    fetch.mockResolvedValueOnce(makeFetchResponse([
+      {
+        'Reg ID': '25SFE023',
+        Name: 'Not Yet',
+        'FE 3021': 'A',
+        'FE 3022': 'A',
+        'FE 3023': 'A',
+        'FE 3024': 'A',
+        'FE 3025': 'A',
+        'FE 3026': 'A',
+        'FE 3027': 'A',
+        'FE 3028': 'A',
+        'FE 3029': 'A',
+      },
+    ]));
+
+    const student = (await fetchBatchStats()).students[0];
+    const finalSemester = student.stats.semesters.find((sem) => sem.key === 'level3Semester3Unselected');
+    const levelIIIProgress = student.stats.levelProgress.find((item) => item.label === 'Level III');
+
+    expect(student.stats.specialization.status).toBe('not_selected');
+    expect(finalSemester).toEqual(expect.objectContaining({ totalCredits: 12, courses: [] }));
+    expect(levelIIIProgress).toEqual(expect.objectContaining({ credits: 30, earned: 18, percent: 60 }));
+    expect(student.stats.forecast.requiresSpecializationSelection).toBe(true);
+  });
+
+  it('calculates a full degree as 90C with one Level III final group', async () => {
+    const gradeColumns = {};
+    [
+      'FE 1021', 'FE 1022', 'FE 1023', 'FE 1024', 'FE 1025',
+      'FE 1026', 'FE 1027', 'FE 1028', 'FE 1029', 'FE 1030',
+      'FE 1031', 'FE 1032', 'FE 1033', 'FE 1034', 'FE 1035',
+      'FE 2021', 'FE 2022', 'FE 2023', 'FE 2024', 'FE 2025',
+      'FE 2026', 'FE 2027', 'FE 2028', 'FE 2029', 'FE 2030',
+      'FE 2031', 'FE 2032', 'FE 2033', 'FE 2034', 'FE 2035',
+      'FE 3021', 'FE 3022', 'FE 3023', 'FE 3024', 'FE 3025',
+      'FE 3026', 'FE 3027', 'FE 3028', 'FE 3029',
+      'FE 3030', 'FE 3031', 'FE 3032',
+    ].forEach((code) => {
+      gradeColumns[code] = 'A';
+    });
+
+    fetch.mockResolvedValueOnce(makeFetchResponse([{ 'Reg ID': '25SFE090', Name: 'Full', ...gradeColumns }]));
+
+    const student = (await fetchBatchStats()).students[0];
+
+    expect(student.stats.levelProgress).toEqual([
+      expect.objectContaining({ label: 'Level I', credits: 30, earned: 30 }),
+      expect.objectContaining({ label: 'Level II', credits: 30, earned: 30 }),
+      expect.objectContaining({ label: 'Level III', credits: 30, earned: 30 }),
+    ]);
+    expect(student.stats.overall.credits).toBe(90);
+    expect(student.stats.degreeCredits).toBe(90);
+    expect(student.stats.gpaCreditTotal).toBe(90);
   });
 
   it('generates subject comparison rows with batch averages', async () => {

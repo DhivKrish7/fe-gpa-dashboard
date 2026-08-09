@@ -29,5 +29,5 @@ export const GRADE_COLORS = {
   '-': '#334155',
 };
 
-export const GPA_CREDIT_TOTAL = 88;
+export const GPA_CREDIT_TOTAL = 90;
 export const DEGREE_TOTAL_CREDITS = 90;

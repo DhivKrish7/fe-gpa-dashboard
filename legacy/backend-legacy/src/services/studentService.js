@@ -1,12 +1,14 @@
 const googleSheetsService = require('./googleSheetsService');
 const {
+  COURSE_CATALOG,
   DEGREE_TOTAL_CREDITS,
   GPA_COURSES,
   GPA_CREDIT_TOTAL,
   GRADE_POINTS,
   GRADE_SCALE,
+  LEVEL3_FINAL_GROUPS,
   LEVEL_ONE_COURSES,
-  SEMESTER_GROUPS,
+  getSemesterGroupsForSpecialization,
 } = require('../constants/academicCatalog');
 
 const DEFAULT_TARGET_GPA = 3.75;
@@ -42,10 +44,49 @@ const getClassification = (gpa) => {
 
 const toStudentGrades = (student, overrides = {}) => {
   const sourceGrades = student.grades && typeof student.grades === 'object' ? student.grades : student;
-  return GPA_COURSES.reduce((accumulator, course) => {
+  return COURSE_CATALOG.reduce((accumulator, course) => {
     accumulator[course.code] = normalizeGrade(overrides[course.code] ?? sourceGrades?.[course.code] ?? '');
     return accumulator;
   }, {});
+};
+
+const resolveSpecialization = (grades) => {
+  const matches = LEVEL3_FINAL_GROUPS.map((group) => {
+    const courses = group.courses.filter((course) => grades[course.code]);
+    return {
+      id: group.id,
+      label: group.label,
+      key: group.key,
+      courses,
+      credits: courses.reduce((sum, course) => sum + course.credits, 0),
+    };
+  }).filter((group) => group.courses.length > 0);
+
+  if (!matches.length) {
+    return {
+      status: 'not_selected',
+      selectedGroupId: null,
+      selectedGroupLabel: 'Specialization not yet selected',
+      options: LEVEL3_FINAL_GROUPS,
+      conflicts: [],
+    };
+  }
+
+  const selected = [...matches].sort((left, right) =>
+    right.credits - left.credits ||
+    right.courses.length - left.courses.length ||
+    left.id.localeCompare(right.id)
+  )[0];
+  const conflicts = matches.filter((group) => group.id !== selected.id);
+
+  return {
+    status: conflicts.length ? 'conflict' : 'selected',
+    selectedGroupId: selected.id,
+    selectedGroupLabel: selected.label,
+    options: LEVEL3_FINAL_GROUPS,
+    conflicts,
+    warning: conflicts.length ? `Multiple Level III final-semester specializations contain results. Counting ${selected.label} only.` : null,
+  };
 };
 
 const computeCourseRows = (grades, group) => group.courses.map((course) => {
@@ -138,7 +179,8 @@ const getLevelProgress = (semesterGroups) => ['Level I', 'Level II', 'Level III'
 
 const buildBasicStudent = (student, options = {}) => {
   const grades = toStudentGrades(student, options.overrides);
-  const semesterGroups = SEMESTER_GROUPS.map((group) => {
+  const specialization = resolveSpecialization(grades);
+  const semesterGroups = getSemesterGroupsForSpecialization(specialization.selectedGroupId).map((group) => {
     const courses = computeCourseRows(grades, group);
     const stats = computeGPA(courses);
     return {
@@ -146,8 +188,13 @@ const buildBasicStudent = (student, options = {}) => {
       label: group.label,
       shortLabel: group.shortLabel,
       level: group.level,
+      year: group.year,
+      semester: group.semester,
+      group: group.group,
+      groupLabel: group.groupLabel,
+      specializationRequired: Boolean(group.specializationRequired),
       editable: Boolean(group.editable),
-      totalCredits: group.courses.reduce((sum, course) => sum + course.credits, 0),
+      totalCredits: group.totalCredits || group.courses.reduce((sum, course) => sum + course.credits, 0),
       courses,
       ...stats,
     };
@@ -178,6 +225,8 @@ const buildBasicStudent = (student, options = {}) => {
       gpaCreditTotal: GPA_CREDIT_TOTAL,
       levelProgress: getLevelProgress(semesterGroups),
       forecast: getForecast(overall, options.targetGPA),
+      specialization,
+      academicWarnings: specialization.warning ? [specialization.warning] : [],
     },
   };
 };
@@ -237,10 +286,9 @@ const applySubjectAnalytics = (student, subjectStats) => {
     },
     charts: {
       semesterTrend: student.stats.semesters
-        .filter((semester) => semester.level === 'Level I' && semester.gpa !== null)
+        .filter((semester) => semester.gpa !== null)
         .map((semester) => ({ name: semester.shortLabel, GPA: semester.gpa })),
       subjectComparison: subjectScores
-        .filter((subject) => LEVEL_ONE_COURSES.some((course) => course.code === subject.code))
         .map((subject) => ({
           name: subject.code.replace('FE ', ''),
           me: subject.points,

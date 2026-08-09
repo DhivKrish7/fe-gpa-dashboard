@@ -7,6 +7,7 @@ import { GPATrendChart } from './components/charts/GPATrendChart';
 import { BatchDistributionChart } from './components/charts/BatchDistributionChart';
 import { SubjectComparisonChart } from './components/charts/SubjectComparisonChart';
 import { useDashboardData } from './hooks/useDashboardData';
+import { buildForecast } from './services/api';
 import { buildReportHTML } from './utils/report';
 import { GRADE_COLORS, GRADE_SCALE } from './constants/grades';
 
@@ -40,6 +41,7 @@ export default function App() {
   const [userGrades, setUserGrades]   = useState({});
   const [whatIfGrades, setWhatIfGrades] = useState({});
   const [whatIfRepeats, setWhatIfRepeats] = useState({});
+  const [hypotheticalSpecialization, setHypotheticalSpecialization] = useState('');
   const [activeTab, setActiveTab]     = useState('results');
   const [subjectChartType, setSubjectChartType] = useState('bar');
   const targetGPA = 3.7;
@@ -54,8 +56,34 @@ export default function App() {
   const analytics   = selectedStudent?.analytics || null;
   const overall     = stats?.overall || {};
   const classification = stats?.degreeClassification || overall.classification || {};
-  const forecast    = stats?.forecast || {};
-  const levelOneSemesters = (stats?.semesters || []).filter((s) => s.level === 'Level I');
+  const rawForecast = stats?.forecast || {};
+  const specialization = stats?.specialization || {};
+  const specializationOptions = specialization.options || rawForecast.specializationOptions || [];
+  const needsSpecializationSelection = specialization.status === 'not_selected';
+  const selectedHypotheticalGroup = specializationOptions.find((group) => group.id === hypotheticalSpecialization) || null;
+  const effectiveForecast = useMemo(() => {
+    if (!selectedStudent) return rawForecast;
+    const baseRows = (selectedStudent.stats?.semesters || []).flatMap((sem) => sem.courses || []);
+    const hypotheticalRows = needsSpecializationSelection && selectedHypotheticalGroup
+      ? selectedHypotheticalGroup.courses.map((course) => ({
+        ...course,
+        grade: '',
+        points: null,
+        totalPoints: null,
+        graded: false,
+        nonGPA: Boolean(course.nonGPA),
+      }))
+      : [];
+
+    return {
+      ...rawForecast,
+      ...buildForecast([...baseRows, ...hypotheticalRows], targetGPA),
+      requiresSpecializationSelection: needsSpecializationSelection && !selectedHypotheticalGroup,
+      selectedHypotheticalSpecialization: selectedHypotheticalGroup?.label || null,
+    };
+  }, [selectedStudent, rawForecast, needsSpecializationSelection, selectedHypotheticalGroup, targetGPA]);
+  const forecast    = effectiveForecast || {};
+  const levelOneSemesters = (stats?.semesters || []).filter((s) => s.level !== 'Unknown');
   const refreshStatus = loading ? 'Updating…' : error ? 'Unable to refresh' : 'Live results';
   const lastUpdatedLabel = lastUpdatedAt ? `Results last updated: ${new Date(lastUpdatedAt).toLocaleString()}` : lastSyncedAt ? `Last sync: ${new Date(lastSyncedAt).toLocaleString()}` : null;
   const semesterChartData = selectedStudent?.charts?.semesterTrend || [];
@@ -84,10 +112,21 @@ export default function App() {
 
   const remainingCourses = useMemo(() => {
     const semesters = selectedStudent?.stats?.semesters || [];
-    return semesters.flatMap((sem) =>
+    const baseRemaining = semesters.flatMap((sem) =>
       (sem?.courses || []).filter((course) => !course.nonGPA && course.points === null)
     );
-  }, [selectedStudent]);
+    const hypotheticalRemaining = needsSpecializationSelection && selectedHypotheticalGroup
+      ? selectedHypotheticalGroup.courses.map((course) => ({
+        ...course,
+        grade: '',
+        points: null,
+        totalPoints: null,
+        graded: false,
+        nonGPA: Boolean(course.nonGPA),
+      }))
+      : [];
+    return [...baseRemaining, ...hypotheticalRemaining];
+  }, [selectedStudent, needsSpecializationSelection, selectedHypotheticalGroup]);
 
   const repeatEligibleCourses = useMemo(() => {
     const semesters = selectedStudent?.stats?.semesters || [];
@@ -195,6 +234,7 @@ export default function App() {
   useEffect(() => {
     setWhatIfGrades({});
     setWhatIfRepeats({});
+    setHypotheticalSpecialization('');
   }, [selectedStudent?.id]);
 
   const batchGpaDiff = overall.gpa !== null && batchAverageGpa !== null
@@ -209,6 +249,7 @@ export default function App() {
   const handleSelectStudent = (id) => {
     setStudentId(id);
     setUserGrades({});
+    setHypotheticalSpecialization('');
     setActiveTab('results');
   };
 
@@ -299,7 +340,7 @@ export default function App() {
               { label: 'Percentile',     value: formatPercent(stats.percentile), color: '#10b981', sub: 'relative standing' },
               { label: 'Batch Avg GPA',  value: batchAverageGpa !== null ? formatNumber(batchAverageGpa) : 'Batch average unavailable', color: '#f59e0b', sub: 'for comparison' },
               { label: 'Credits Earned', value: overall.credits ?? 0, color: '#60a5fa', sub: `of ${stats.gpaCreditTotal} GPA credits` },
-              { label: 'Forecast Status', value: forecast.status === 'guaranteed' ? 'Secured' : forecast.status === 'impossible' ? 'Impossible' : 'Open', color: forecast.status === 'guaranteed' ? '#10b981' : forecast.status === 'impossible' ? '#f87171' : '#6366f1', sub: 'First Class forecast' },
+              { label: 'Forecast Status', value: forecast.requiresSpecializationSelection ? 'Select Group' : forecast.status === 'guaranteed' ? 'Secured' : forecast.status === 'impossible' ? 'Impossible' : 'Open', color: forecast.requiresSpecializationSelection ? '#c7d2fe' : forecast.status === 'guaranteed' ? '#10b981' : forecast.status === 'impossible' ? '#f87171' : '#6366f1', sub: 'First Class forecast' },
             ]} />
 
             {/* Tabs */}
@@ -332,7 +373,7 @@ export default function App() {
                 </div>
 
                 <Card>
-                  <CardHeader title="GPA Trend — Level I" subtitle="Actual performance vs target" />
+                  <CardHeader title="GPA Trend" subtitle="Actual performance vs target" />
                   <div style={{ padding: '16px 20px 8px' }}>
                     <GPATrendChart data={semesterChartData} targetGPA={forecast.targetGPA ?? targetGPA} />
                   </div>
@@ -388,8 +429,8 @@ export default function App() {
                 {levelOneSemesters.map((sem) => (
                   <Card key={sem.key}>
                     <CardHeader
-                      title={`${sem.label} — ${sem.courses[0]?.code || ''} to ${sem.courses.filter((c) => !c.nonGPA).at(-1)?.code || ''}`}
-                      subtitle={sem.editable ? 'Editable' : 'Locked from database'}
+                      title={sem.courses.length > 0 ? `${sem.label} - ${sem.courses[0]?.code || ''} to ${sem.courses.filter((c) => !c.nonGPA).at(-1)?.code || ''}` : sem.label}
+                      subtitle={sem.specializationRequired ? 'Specialization not yet selected' : sem.editable ? 'Editable' : `${sem.totalCredits}C curriculum`}
                     />
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
@@ -400,7 +441,11 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {sem.courses.map((course, idx) => {
+                        {sem.courses.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} style={{ padding: '18px 16px', fontSize: 13, color: T.muted }}>Specialization not yet selected.</td>
+                          </tr>
+                        ) : sem.courses.map((course, idx) => {
                           const absent   = course.grade === '-';
                           const editable = course.editable && !course.nonGPA;
                           return (
@@ -446,12 +491,38 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <Card>
                   <CardHeader title="First Class Forecast" subtitle={`Target GPA ${formatNumber(forecast.targetGPA ?? targetGPA, 2)}`} />
+                  {needsSpecializationSelection && (
+                    <div style={{ padding: '16px 24px 0' }}>
+                      <div style={{ fontSize: 12, color: T.sub, marginBottom: 8 }}>Select your Level 3 specialization for forecast and What If simulations.</div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {specializationOptions.map((group) => (
+                          <button
+                            key={group.id}
+                            type="button"
+                            onClick={() => setHypotheticalSpecialization(group.id)}
+                            style={{
+                              background: hypotheticalSpecialization === group.id ? '#6366f1' : '#1e2236',
+                              color: hypotheticalSpecialization === group.id ? '#fff' : '#c7d2fe',
+                              border: `1px solid ${hypotheticalSpecialization === group.id ? '#818cf8' : T.border}`,
+                              borderRadius: 8,
+                              padding: '8px 12px',
+                              cursor: 'pointer',
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {group.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
                     {[
                       { label: 'Current GPA', value: formatNumber(forecast.currentGPA, 2), color: '#60a5fa', sub: `Completed ${forecast.completedCredits ?? 0} GPA credits` },
                       { label: 'Remaining GPA Credits', value: forecast.remainingCredits ?? 0, color: '#a78bfa', sub: `${forecast.remainingSubjects ?? 0} remaining subjects` },
                       { label: 'Target GPA', value: formatNumber(forecast.targetGPA ?? targetGPA, 2), color: '#fbbf24', sub: 'First Class threshold' },
-                      { label: 'Forecast Status', value: forecast.status === 'guaranteed' ? 'Secured' : forecast.status === 'impossible' ? 'Impossible' : 'Conditional', color: forecast.status === 'guaranteed' ? '#10b981' : forecast.status === 'impossible' ? '#f87171' : '#6366f1', sub: forecast.status === 'guaranteed' ? 'First Class already secured' : forecast.status === 'impossible' ? 'Math is not enough' : 'Minimum A/A+ required' },
+                      { label: 'Forecast Status', value: forecast.requiresSpecializationSelection ? 'Select Group' : forecast.status === 'guaranteed' ? 'Secured' : forecast.status === 'impossible' ? 'Impossible' : 'Conditional', color: forecast.requiresSpecializationSelection ? '#c7d2fe' : forecast.status === 'guaranteed' ? '#10b981' : forecast.status === 'impossible' ? '#f87171' : '#6366f1', sub: forecast.requiresSpecializationSelection ? 'Specialization needed' : forecast.status === 'guaranteed' ? 'First Class already secured' : forecast.status === 'impossible' ? 'Math is not enough' : 'Minimum A/A+ required' },
                     ].map((item) => (
                       <div key={item.label} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
                         <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase', letterSpacing: '.08em' }}>{item.label}</div>
@@ -465,7 +536,9 @@ export default function App() {
                 <Card>
                   <CardHeader title="Forecast Result" subtitle="Minimum A/A+ grades needed" />
                   <div style={{ padding: '20px 24px' }}>
-                    {forecast.status === 'guaranteed' ? (
+                    {forecast.requiresSpecializationSelection ? (
+                      <div style={{ color: '#c7d2fe', fontWeight: 700, marginBottom: 12 }}>Specialization not yet selected. Choose a Level 3 specialization above to include final-semester subjects in the forecast.</div>
+                    ) : forecast.status === 'guaranteed' ? (
                       <div style={{ color: '#10b981', fontWeight: 700, marginBottom: 12 }}>First Class is already mathematically secured.</div>
                     ) : forecast.status === 'impossible' ? (
                       <div style={{ color: '#f87171', fontWeight: 700, marginBottom: 12 }}>First Class is no longer mathematically reachable with the remaining subjects.</div>

@@ -55,7 +55,7 @@ test('studentService computes GPA analytics, ranking, and forecast in the backen
     assert.equal(student.analytics.weakestSubject.code, 'FE 1021');
     assert.equal(student.analytics.consistencyScore, 100);
     assert.equal(student.stats.forecast.targetGPA, 3.5);
-    assert.equal(student.stats.forecast.remainingCredits, 68);
+    assert.equal(student.stats.forecast.remainingCredits, 70);
 
     const leaderboard = await service.getLeaderboard();
     assert.deepEqual(leaderboard.map((entry) => entry.id), ['001', '002', '003']);
