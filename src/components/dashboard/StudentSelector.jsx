@@ -53,11 +53,6 @@ export const StudentSelector = ({
         <div style={{ color: '#f87171', fontSize: 13 }}>⚠ {error}</div>
       )}
 
-      {selectedStudentId && (
-        <div style={{ fontSize: 12, color: T.muted }}>
-          Sem I &amp; II locked from database · Sem III editable
-        </div>
-      )}
     </div>
   </Card>
 );

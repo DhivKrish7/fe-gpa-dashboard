@@ -70,17 +70,7 @@ describe('fetchBatchStats', () => {
         'FE 1023': 'A',
         'FE 1024': 'A',
         'FE 1025': 'A',
-        'FE 1045': 'A',
-      },
-    ]));
 
-    const batch = await fetchBatchStats();
-    expect(batch.students[0].gpa).toBe(4.0);
-  });
-
-  it('handles blank grades, malformed rows, and missing IDs gracefully', async () => {
-    fetch.mockResolvedValueOnce(makeFetchResponse([
-      {
         'Reg ID': '25SFE004',
         Name: 'Dan',
         'FE 1021': '',

@@ -6,7 +6,7 @@ const formatDate = (timestamp) => {
 const formatNumber = (value, digits = 3) => (value !== null && value !== undefined ? Number(value).toFixed(digits) : '-');
 const formatPercent = (value, digits = 0) => (value !== null && value !== undefined ? `${Number(value).toFixed(digits)}%` : '-');
 
-export const buildReportHTML = (student, batchStats, targetGPA) => {
+export const buildReportHTML = (student, batchStats) => {
   const stats = student?.stats || {};
   const overall = stats.overall || {};
   const classification = stats.degreeClassification || overall.classification || {};
@@ -24,7 +24,6 @@ export const buildReportHTML = (student, batchStats, targetGPA) => {
     <div class="header">
       <h1>BSc Financial Engineering GPA Report</h1>
       <p>Student ID: ${student?.id || '-'}</p>
-      <p>Target GPA: ${formatNumber(targetGPA, 2)}</p>
     </div>
     <div class="kpi">
       <div class="card"><strong>Overall GPA</strong><div>${formatNumber(overall.gpa)}</div></div>

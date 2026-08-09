@@ -24,8 +24,8 @@ const formatPercent = (value, digits = 0) => (value !== null && value !== undefi
 export default function App() {
   const [studentId, setStudentId] = useState('');
   const [userGrades, setUserGrades]   = useState({});
-  const [targetGPA, setTargetGPA]     = useState(3.7);   // default 3.7
   const [activeTab, setActiveTab]     = useState('results');
+  const targetGPA = 3.7;
 
   const {
     batchStats, loading, error,
@@ -57,7 +57,7 @@ export default function App() {
 
   const handleExport = () => {
     if (!selectedStudent) return;
-    const html = buildReportHTML(selectedStudent, batchStats, targetGPA);
+    const html = buildReportHTML(selectedStudent, batchStats);
     const w = window.open('', '_blank', 'noopener,noreferrer');
     if (!w) { window.alert('Popup blocked. Please allow popups to export.'); return; }
     w.document.write(html);
@@ -69,9 +69,6 @@ export default function App() {
   return (
     <div style={{ fontFamily: "'Inter', system-ui, sans-serif", background: T.bg, minHeight: '100vh', color: T.text }}>
       <DashboardHeader
-        targetGPA={targetGPA}
-        currentGPA={overall.gpa ?? null}
-        onTargetChange={setTargetGPA}
         onExport={handleExport}
         canExport={Boolean(selectedStudent)}
       />
@@ -151,7 +148,7 @@ export default function App() {
                   ? (neededPerCredit > 4 ? 'Impossible' : formatNumber(neededPerCredit, 2))
                   : '-',
                 color: neededPerCredit > 4 ? '#f87171' : '#a3e635',
-                sub: `to reach GPA ${forecast.targetGPA ?? targetGPA}`,
+                sub: 'per remaining GPA credit',
               },
             ]} />
 
@@ -342,36 +339,6 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                </Card>
-                <Card>
-                  <CardHeader title="Top 10 Students" subtitle="Batch leaderboard" />
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                        {['Rank', 'Reg ID', 'Sem I GPA', 'Sem II GPA', 'Sem III GPA', 'Overall GPA', 'Class'].map((h) => (
-                          <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontSize: 10, color: T.dim, textTransform: 'uppercase', letterSpacing: '.08em' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rankedStudents.slice(0, 10).map((s, i) => {
-                        const c = s.classification || {};
-                        return (
-                          <tr key={s.id} style={{ borderBottom: `1px solid ${T.border}22`, background: s.id === studentId ? '#312e8133' : 'transparent' }}>
-                            <td style={{ padding: '8px 16px', fontWeight: 700, color: i === 0 ? '#fbbf24' : i === 1 ? '#94a3b8' : i === 2 ? '#f97316' : T.sub }}>{s.rank}</td>
-                            <td style={{ padding: '8px 16px', fontFamily: 'monospace', fontSize: 13, color: s.id === studentId ? '#c7d2fe' : T.text, fontWeight: s.id === studentId ? 700 : 400 }}>
-                              {s.id}{s.id === studentId && <span style={{ marginLeft: 8, fontSize: 10, color: '#6366f1' }}>← YOU</span>}
-                            </td>
-                            <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 600 }}>{formatNumber(s.semesterGpas?.level1Semester1)}</td>
-                            <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 600 }}>{formatNumber(s.semesterGpas?.level1Semester2)}</td>
-                            <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 600 }}>{formatNumber(s.semesterGpas?.level1Semester3)}</td>
-                            <td style={{ padding: '8px 16px', color: c.color || T.sub, fontWeight: 800 }}>{formatNumber(s.gpa)}</td>
-                            <td style={{ padding: '8px 16px', fontSize: 12, color: c.color || T.sub }}>{c.label || 'N/A'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
                 </Card>
               </div>
             )}

@@ -434,6 +434,45 @@ const buildBatchPayload = (rows, targetGpa = 3.7) => {
     };
   });
 
+  const subjectTotals = {};
+  rankedStudents.forEach((student) => {
+    const courseRows = student.stats.semesters.flatMap((sem) => sem.courses);
+    courseRows.forEach((course) => {
+      if (course.nonGPA || course.points === null) return;
+      const totals = subjectTotals[course.code] ?? { code: course.code, name: course.name, total: 0, count: 0 };
+      totals.total += course.points;
+      totals.count += 1;
+      subjectTotals[course.code] = totals;
+    });
+  });
+
+  const subjectAverages = Object.fromEntries(
+    Object.entries(subjectTotals).map(([code, totals]) => [code, round(totals.total / totals.count, 3)])
+  );
+
+  const studentsWithComparison = rankedStudents.map((student) => {
+    const seen = new Set();
+    const subjectComparison = student.stats.semesters.flatMap((sem) => sem.courses)
+      .filter((course) => !course.nonGPA && course.points !== null && !seen.has(course.code))
+      .map((course) => {
+        seen.add(course.code);
+        return {
+          name: course.code,
+          label: course.name,
+          me: course.points,
+          batch: subjectAverages[course.code] ?? null,
+        };
+      });
+
+    return {
+      ...student,
+      charts: {
+        ...student.charts,
+        subjectComparison,
+      },
+    };
+  });
+
   const gpas = validStudents.map((s) => s.gpa).filter((g) => g !== null).sort((a, b) => b - a);
   const averageGpa = gpas.length ? round(gpas.reduce((s, v) => s + v, 0) / gpas.length) : null;
 
@@ -444,9 +483,11 @@ const buildBatchPayload = (rows, targetGpa = 3.7) => {
     if (buckets[b] !== undefined) buckets[b]++;
   });
 
+  const finalStudents = studentsWithComparison;
+
   return {
-    students:   rankedStudents,
-    leaderboard: rankedStudents.filter((s) => s.gpa !== null).sort((a, b) => a.rank - b.rank),
+    students:   finalStudents,
+    leaderboard: finalStudents.filter((s) => s.gpa !== null).sort((a, b) => a.rank - b.rank),
     averageGpa,
     medianGpa:  gpas.length ? gpas[Math.floor(gpas.length / 2)] : null,
     passRate:   gpas.length ? round((gpas.filter((g) => g >= 2.0).length / gpas.length) * 100, 1) : 0,

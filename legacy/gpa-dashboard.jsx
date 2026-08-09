@@ -456,8 +456,8 @@ export default function App() {
       <div style={{ background:"linear-gradient(135deg,#1e1b4b 0%,#312e81 60%,#1e1b4b 100%)", borderBottom:`1px solid #312e81`, padding:"20px 28px" }}>
         <div style={{ maxWidth:1280, margin:"0 auto", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:16 }}>
           <div>
-            <div style={{ fontSize:10, letterSpacing:"0.15em", color:"#a5b4fc", textTransform:"uppercase" }}>University of Colombo · Dept. of Mathematics · Batch 2025</div>
-            <h1 style={{ margin:"4px 0 0", fontSize:22, fontWeight:800, color:"#fff", letterSpacing:"-0.02em" }}>BSc Financial Engineering — GPA Dashboard</h1>
+            <div style={{ fontSize:10, letterSpacing:"0.15em", color:"#a5b4fc", textTransform:"uppercase" }}>University of Colombo · Dept. of Mathematics · Batch of 2025</div>
+            <h1 style={{ margin:"4px 0 0", fontSize:22, fontWeight:800, color:"#fff", letterSpacing:"-0.02em" }}>BSc Financial Engineering · GPA Dashboard</h1>
           </div>
           <div style={{ display:"flex", gap:12, alignItems:"center" }}>
             {/* Target GPA */}

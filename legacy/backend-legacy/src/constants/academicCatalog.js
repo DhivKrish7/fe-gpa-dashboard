@@ -56,7 +56,6 @@ const SEMESTER_GROUPS = [
       { code: 'FE 1033', name: 'Financial Analytics I', credits: 2 },
       { code: 'FE 1034', name: 'Computational Linear Algebra', credits: 2 },
       { code: 'FE 1035', name: 'Financial Mathematics II', credits: 2 },
-      { code: 'FE 1045', name: 'Basic Mathematics (Non-GPA)', credits: 2, nonGPA: true },
     ],
   },
   {
