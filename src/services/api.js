@@ -221,29 +221,147 @@ const computeGPAFromRows = (courseRows) => {
 
 // ── Build forecast scenarios ──────────────────────────────────────────────────
 
-const buildForecast = (overallGpa, earnedCredits, targetGpa) => {
-  const GPA_CREDIT_TOTAL = 88;
-  const remaining = Math.max(0, GPA_CREDIT_TOTAL - earnedCredits);
-  const currentQP = (overallGpa ?? 0) * earnedCredits;
+const HIGH_GRADE_POINTS = 4.0;
+const HIGH_GRADE_LABEL = 'A/A+';
 
-  const neededPerCredit = overallGpa !== null && remaining > 0
-    ? round((targetGpa * GPA_CREDIT_TOTAL - currentQP) / remaining, 2)
-    : null;
+const getGradeEntry = (label) => GRADE_SCALE.find((entry) => entry.label === label) || null;
+const getGradesBelow = (points) => GRADE_SCALE.filter((entry) => entry.points < points).sort((a, b) => b.points - a.points || a.label.localeCompare(b.label));
+const getGradesDesc = () => [...GRADE_SCALE].sort((a, b) => b.points - a.points || a.label.localeCompare(b.label));
 
-  const scenarios = GRADE_SCALE.map((gs) => {
-    const proj = remaining > 0 && overallGpa !== null
-      ? (currentQP + gs.points * remaining) / GPA_CREDIT_TOTAL
-      : overallGpa;
-    return {
-      grade:          gs.label,
-      points:         gs.points,
-      finalGPA:       round(proj),
-      classification: getClassification(proj),
-      hitsTarget:     proj !== null ? proj >= targetGpa : false,
-    };
-  });
+const buildExamplePath = (remaining, highCount, completedQualityPoints, totalCredits, targetQualityPoints) => {
+  const sortedRemaining = [...remaining].sort((a, b) => b.credits - a.credits);
+  const bestNonHighEntry = getGradesBelow(HIGH_GRADE_POINTS)[0] || { label: 'E', points: 0 };
 
-  return { targetGPA: targetGpa, remainingCredits: remaining, neededPerCredit, scenarios };
+  const assignments = sortedRemaining.map((course, index) => ({
+    course,
+    gradeLabel: index < highCount ? HIGH_GRADE_LABEL : bestNonHighEntry.label,
+    points: index < highCount ? HIGH_GRADE_POINTS : bestNonHighEntry.points,
+    credits: course.credits,
+  }));
+
+  let currentQualityPoints = completedQualityPoints + assignments.reduce((sum, assignment) => sum + assignment.points * assignment.credits, 0);
+
+  const nonHighAssignments = assignments
+    .filter((assignment) => assignment.gradeLabel !== HIGH_GRADE_LABEL)
+    .sort((a, b) => a.credits - b.credits);
+
+  const nonHighGradeEntries = getGradesDesc().filter((entry) => entry.points < HIGH_GRADE_POINTS);
+
+  for (const assignment of nonHighAssignments) {
+    let currentIndex = nonHighGradeEntries.findIndex((entry) => entry.points === assignment.points);
+    while (currentIndex < nonHighGradeEntries.length - 1) {
+      const nextEntry = nonHighGradeEntries[currentIndex + 1];
+      const delta = (assignment.points - nextEntry.points) * assignment.credits;
+      if (currentQualityPoints - delta >= targetQualityPoints) {
+        currentQualityPoints -= delta;
+        assignment.points = nextEntry.points;
+        assignment.gradeLabel = nextEntry.label;
+        currentIndex += 1;
+        continue;
+      }
+      break;
+    }
+  }
+
+  return assignments.reduce((path, assignment) => {
+    const label = assignment.gradeLabel === HIGH_GRADE_LABEL ? HIGH_GRADE_LABEL : assignment.gradeLabel;
+    path[label] = (path[label] || 0) + 1;
+    return path;
+  }, {});
+};
+
+const buildForecast = (courseRows, targetGpa = 3.7) => {
+  const completed = courseRows.filter((course) => !course.nonGPA && course.points !== null);
+  const remaining = courseRows.filter((course) => !course.nonGPA && course.points === null);
+
+  const completedCredits = completed.reduce((sum, course) => sum + course.credits, 0);
+  const completedQualityPoints = completed.reduce((sum, course) => sum + course.points * course.credits, 0);
+  const remainingCredits = remaining.reduce((sum, course) => sum + course.credits, 0);
+  const totalCredits = completedCredits + remainingCredits;
+
+  const currentGPA = completedCredits > 0 ? round(completedQualityPoints / completedCredits) : null;
+  const targetQualityPoints = targetGpa * totalCredits;
+  const maxPossibleQualityPoints = completedQualityPoints + remainingCredits * HIGH_GRADE_POINTS;
+  const minPossibleQualityPoints = completedQualityPoints + remainingCredits * Math.min(...GRADE_SCALE.map((entry) => entry.points));
+
+  const maxAchievableGPA = totalCredits > 0 ? round(maxPossibleQualityPoints / totalCredits) : null;
+  const minAchievableGPA = totalCredits > 0 ? round(minPossibleQualityPoints / totalCredits) : null;
+
+  const status = (() => {
+    if (totalCredits === 0) return 'possible';
+    if (maxPossibleQualityPoints < targetQualityPoints) return 'impossible';
+    if (minPossibleQualityPoints >= targetQualityPoints) return 'guaranteed';
+    return 'possible';
+  })();
+
+  let minimumHighGrades = null;
+  let projectedGPA = null;
+  let examplePath = {};
+  let alternativeScenarios = [];
+
+  if (status === 'possible') {
+    const sortedRemaining = [...remaining].sort((a, b) => b.credits - a.credits);
+    const bestNonHighEntry = getGradesBelow(HIGH_GRADE_POINTS)[0] || { points: 0 };
+    const bestNonHighPoint = bestNonHighEntry.points;
+
+    for (let highCount = 0; highCount <= remaining.length; highCount += 1) {
+      const highCourses = sortedRemaining.slice(0, highCount);
+      const highQualityPoints = highCourses.reduce((sum, course) => sum + course.credits * HIGH_GRADE_POINTS, 0);
+      const otherCredits = remainingCredits - highCourses.reduce((sum, course) => sum + course.credits, 0);
+      const candidateQualityPoints = completedQualityPoints + highQualityPoints + otherCredits * bestNonHighPoint;
+      const candidateGPA = totalCredits > 0 ? candidateQualityPoints / totalCredits : null;
+
+      if (candidateGPA !== null && candidateGPA >= targetGpa) {
+        minimumHighGrades = highCount;
+        projectedGPA = round(candidateGPA);
+        break;
+      }
+    }
+
+    if (minimumHighGrades === null) {
+      minimumHighGrades = remaining.length;
+      projectedGPA = maxAchievableGPA;
+    }
+
+    examplePath = buildExamplePath(remaining, minimumHighGrades, completedQualityPoints, totalCredits, targetQualityPoints);
+    const comparisonCount = Math.min(3, remaining.length - minimumHighGrades + 1);
+    for (let extra = 0; extra < comparisonCount; extra += 1) {
+      const highCount = Math.min(minimumHighGrades + extra, remaining.length);
+      const highCourses = sortedRemaining.slice(0, highCount);
+      const highQualityPoints = highCourses.reduce((sum, course) => sum + course.credits * HIGH_GRADE_POINTS, 0);
+      const otherCredits = remainingCredits - highCourses.reduce((sum, course) => sum + course.credits, 0);
+      const candidateQualityPoints = completedQualityPoints + highQualityPoints + otherCredits * bestNonHighPoint;
+      alternativeScenarios.push({ highGrades: highCount, projectedGPA: round(totalCredits > 0 ? candidateQualityPoints / totalCredits : null) });
+    }
+  }
+
+  if (status === 'guaranteed') {
+    projectedGPA = minAchievableGPA;
+    examplePath = remaining.length > 0 ? { [HIGH_GRADE_LABEL]: 0, E: remaining.length } : {};
+    alternativeScenarios = [{ highGrades: 0, projectedGPA: minAchievableGPA }];
+  }
+
+  if (status === 'impossible') {
+    minimumHighGrades = remaining.length;
+    examplePath = remaining.length > 0 ? { [HIGH_GRADE_LABEL]: remaining.length } : {};
+    projectedGPA = maxAchievableGPA;
+    alternativeScenarios = [{ highGrades: remaining.length, projectedGPA: maxAchievableGPA }];
+  }
+
+  return {
+    targetGPA: targetGpa,
+    currentGPA,
+    completedCredits,
+    remainingCredits,
+    remainingSubjects: remaining.length,
+    totalCredits,
+    status,
+    minimumHighGrades,
+    examplePath,
+    projectedGPA,
+    maxAchievableGPA,
+    alternativeScenarios,
+  };
 };
 
 const getLevelProgress = (semesterGroups) => {
@@ -344,7 +462,7 @@ const buildStudentPayload = (row, targetGpa = 3.7) => {
   else if (healthScore >= 65) healthLabel = 'Stable';
   else if (healthScore > 0)   healthLabel = 'Needs attention';
 
-  const forecast = buildForecast(overallGpa, earnedCredits, targetGpa);
+  const forecast = buildForecast(allCourseRows, targetGpa);
 
   const degreeCredits = 90;
   const gpaCreditTotal = 88;
@@ -365,11 +483,6 @@ const buildStudentPayload = (row, targetGpa = 3.7) => {
       rank: null,
       percentile: null,
       rankedStudentCount: 0,
-      levelProgress: [
-        { label: 'Level I',   credits: 30, earned: earnedCredits, percent: round(Math.min(100,(earnedCredits/30)*100),0) },
-        { label: 'Level II',  credits: 30, earned: 0, percent: 0 },
-        { label: 'Level III', credits: 30, earned: 0, percent: 0 },
-      ],
       forecast,
       levelProgress,
     },
@@ -531,3 +644,5 @@ export const fetchSubjects = async () => {
   const rows = normalizePayload(payload) ?? [];
   return buildBatchPayload(rows).students;
 };
+
+export { buildForecast };

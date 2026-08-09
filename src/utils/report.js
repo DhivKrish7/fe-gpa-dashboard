@@ -35,7 +35,7 @@ export const buildReportHTML = (student, batchStats) => {
       <div class="card"><strong>Batch Average GPA</strong><div>${formatNumber(batchStats?.averageGpa)}</div></div>
       <div class="card"><strong>Academic Health</strong><div>${formatPercent(stats.academicHealth?.score)}</div></div>
       <div class="card"><strong>Consistency</strong><div>${formatPercent(stats.consistencyScore)}</div></div>
-      <div class="card"><strong>Needed Per Credit</strong><div>${formatNumber(stats.forecast?.neededPerCredit, 2)}</div></div>
+      <div class="card"><strong>Minimum A/A+</strong><div>${formatNumber(stats.forecast?.minimumHighGrades, 0)}</div></div>
     </div>
     <h2>Semester Summary</h2>
     <table>

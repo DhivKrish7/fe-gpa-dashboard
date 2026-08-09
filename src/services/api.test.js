@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { fetchBatchStats } from './api';
+import { fetchBatchStats, buildForecast } from './api';
 
 const makeFetchResponse = (payload) => ({
   ok: true,
@@ -58,6 +58,52 @@ describe('fetchBatchStats', () => {
     expect(sem3).toBeDefined();
     expect(sem3.gpa).toBeCloseTo((4.0 + 3.7 + 3.3 + 4.0 + 3.0) / 5, 3);
     expect(student.gpa).toBeCloseTo((4.0 + 3.7 + 3.3 + 4.0 + 3.0) / 5, 3);
+  });
+
+  it('supports Level II as three semester groups and computes progress from the catalog', async () => {
+    fetch.mockResolvedValueOnce(makeFetchResponse([
+      {
+        'Reg ID': '25SFE010',
+        Name: 'Dana',
+        'FE 2021': 'A',
+        'FE 2026': 'B+',
+        'FE 2031': 'A-',
+      },
+    ]));
+
+    const batch = await fetchBatchStats();
+    const student = batch.students[0];
+    const levelIISemesters = student.stats.semesters.filter((s) => s.level === 'Level II');
+    const levelIIProgress = student.stats.levelProgress.find((item) => item.label === 'Level II');
+
+    expect(levelIISemesters).toHaveLength(3);
+    expect(levelIISemesters.map((sem) => sem.totalCredits)).toEqual([10, 10, 12]);
+    expect(levelIIProgress).toEqual(expect.objectContaining({ label: 'Level II', credits: 32, earned: 6, percent: 19 }));
+  });
+
+  it('generates subject comparison rows with batch averages', async () => {
+    fetch.mockResolvedValueOnce(makeFetchResponse([
+      {
+        'Reg ID': '25SFE011',
+        Name: 'Eli',
+        'FE 1021': 'A',
+        'FE 1022': 'B+',
+      },
+      {
+        'Reg ID': '25SFE012',
+        Name: 'Fay',
+        'FE 1021': 'B',
+        'FE 1022': 'A-',
+      },
+    ]));
+
+    const batch = await fetchBatchStats();
+    const student = batch.students.find((s) => s.id === '25SFE011');
+    const subjectRow = student.charts.subjectComparison.find((item) => item.name === 'FE 1021');
+    const subjectRow2 = student.charts.subjectComparison.find((item) => item.name === 'FE 1022');
+
+    expect(subjectRow).toEqual({ name: 'FE 1021', label: 'Python Programming', me: 4.0, batch: 3.5 });
+    expect(subjectRow2).toEqual({ name: 'FE 1022', label: 'Economics I for Finance', me: 3.3, batch: 3.5 });
   });
 
   it('excludes non-GPA subjects from GPA calculation', async () => {
@@ -126,5 +172,37 @@ describe('fetchBatchStats', () => {
     const batch = await fetchBatchStats();
     expect(batch.students[0].grades['FE 9999']).toBe('A');
     expect(batch.students[0].gpa).toBe(4.0);
+  });
+
+  it('computes the minimum A/A+ forecast for remaining credits', () => {
+    const courseRows = [
+      { code: 'C1', nonGPA: false, points: 4.0, credits: 3 },
+      { code: 'C2', nonGPA: false, points: null, credits: 2 },
+      { code: 'C3', nonGPA: false, points: null, credits: 2 },
+    ];
+
+    const forecast = buildForecast(courseRows, 3.85);
+
+    expect(forecast.status).toBe('possible');
+    expect(forecast.minimumHighGrades).toBe(1);
+    expect(forecast.projectedGPA).toBeCloseTo(3.914, 3);
+    expect(forecast.examplePath).toEqual(expect.objectContaining({ 'A/A+': 1 }));
+    expect(Object.values(forecast.examplePath).reduce((sum, count) => sum + count, 0)).toBe(2);
+    expect(forecast.alternativeScenarios.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('marks forecast impossible when remaining credits cannot meet the target GPA', () => {
+    const courseRows = [
+      { code: 'C1', nonGPA: false, points: 2.0, credits: 3 },
+      { code: 'C2', nonGPA: false, points: null, credits: 2 },
+      { code: 'C3', nonGPA: false, points: null, credits: 2 },
+    ];
+
+    const forecast = buildForecast(courseRows, 3.7);
+
+    expect(forecast.status).toBe('impossible');
+    expect(forecast.minimumHighGrades).toBe(2);
+    expect(forecast.projectedGPA).toBeCloseTo(3.143, 3);
+    expect(forecast.examplePath['A/A+']).toBe(2);
   });
 });

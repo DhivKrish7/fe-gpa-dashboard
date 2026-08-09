@@ -25,6 +25,7 @@ export default function App() {
   const [studentId, setStudentId] = useState('');
   const [userGrades, setUserGrades]   = useState({});
   const [activeTab, setActiveTab]     = useState('results');
+  const [subjectChartType, setSubjectChartType] = useState('bar');
   const targetGPA = 3.7;
 
   const {
@@ -44,7 +45,6 @@ export default function App() {
   const semesterChartData = selectedStudent?.charts?.semesterTrend || [];
   const subjectChartData  = selectedStudent?.charts?.subjectComparison || [];
   const histogramData     = batchStats?.distribution || [];
-  const neededPerCredit   = forecast.neededPerCredit;
 
   const setGrade = (code, grade) =>
     setUserGrades((prev) => ({ ...prev, [code]: grade }));
@@ -142,14 +142,7 @@ export default function App() {
               { label: 'Percentile',     value: formatPercent(stats.percentile), color: '#10b981', sub: 'relative standing' },
               { label: 'Batch Avg GPA',  value: formatNumber(batchStats?.averageGpa), color: '#f59e0b', sub: 'for comparison' },
               { label: 'Credits Earned', value: overall.credits ?? 0, color: '#60a5fa', sub: `of ${stats.gpaCreditTotal} GPA credits` },
-              {
-                label: 'Need Per Credit',
-                value: neededPerCredit !== null && neededPerCredit !== undefined
-                  ? (neededPerCredit > 4 ? 'Impossible' : formatNumber(neededPerCredit, 2))
-                  : '-',
-                color: neededPerCredit > 4 ? '#f87171' : '#a3e635',
-                sub: 'per remaining GPA credit',
-              },
+              { label: 'Forecast Status', value: forecast.status === 'guaranteed' ? 'Secured' : forecast.status === 'impossible' ? 'Impossible' : 'Open', color: forecast.status === 'guaranteed' ? '#10b981' : forecast.status === 'impossible' ? '#f87171' : '#6366f1', sub: 'First Class forecast' },
             ]} />
 
             {/* Tabs */}
@@ -264,48 +257,80 @@ export default function App() {
             {/* ══ FORECAST ══ */}
             {activeTab === 'forecast' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                  <Card>
-                    <CardHeader title="Scenario Planner" subtitle={`Remaining ${forecast.remainingCredits ?? 0} GPA credits`} />
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                          {['If Avg', 'Points', 'Final GPA', 'Class', 'Hit Target?'].map((h) => (
-                            <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontSize: 10, color: T.dim, textTransform: 'uppercase', letterSpacing: '.08em' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(forecast.scenarios || []).map((s) => (
-                          <tr key={s.grade} style={{ borderBottom: `1px solid ${T.border}22`, background: s.hitsTarget ? 'rgba(16,185,129,0.06)' : 'transparent' }}>
-                            <td style={{ padding: '8px 16px', fontWeight: 700, color: gradeColor(s.grade) }}>{s.grade}</td>
-                            <td style={{ padding: '8px 16px', color: T.sub, fontSize: 12 }}>{formatNumber(s.points, 2)}</td>
-                            <td style={{ padding: '8px 16px', fontWeight: 700, color: s.classification?.color || T.sub }}>{formatNumber(s.finalGPA)}</td>
-                            <td style={{ padding: '8px 16px', fontSize: 12, color: s.classification?.color || T.sub }}>{s.classification?.label || 'N/A'}</td>
-                            <td style={{ padding: '8px 16px', fontWeight: 700, color: s.hitsTarget ? '#10b981' : '#f87171' }}>{s.hitsTarget ? '✓ Yes' : '✗ No'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </Card>
+                <Card>
+                  <CardHeader title="First Class Forecast" subtitle={`Target GPA ${formatNumber(forecast.targetGPA ?? targetGPA, 2)}`} />
+                  <div style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+                    {[
+                      { label: 'Current GPA', value: formatNumber(forecast.currentGPA, 2), color: '#60a5fa', sub: `Completed ${forecast.completedCredits ?? 0} GPA credits` },
+                      { label: 'Remaining GPA Credits', value: forecast.remainingCredits ?? 0, color: '#a78bfa', sub: `${forecast.remainingSubjects ?? 0} remaining subjects` },
+                      { label: 'Target GPA', value: formatNumber(forecast.targetGPA ?? targetGPA, 2), color: '#fbbf24', sub: 'First Class threshold' },
+                      { label: 'Forecast Status', value: forecast.status === 'guaranteed' ? 'Secured' : forecast.status === 'impossible' ? 'Impossible' : 'Conditional', color: forecast.status === 'guaranteed' ? '#10b981' : forecast.status === 'impossible' ? '#f87171' : '#6366f1', sub: forecast.status === 'guaranteed' ? 'First Class already secured' : forecast.status === 'impossible' ? 'Math is not enough' : 'Minimum A/A+ required' },
+                    ].map((item) => (
+                      <div key={item.label} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                        <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase', letterSpacing: '.08em' }}>{item.label}</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: item.color, marginTop: 8 }}>{item.value}</div>
+                        <div style={{ fontSize: 11, color: T.sub, marginTop: 6 }}>{item.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
 
-                  <Card>
-                    <CardHeader title="Degree Progress" subtitle="Current completion" />
-                    <div style={{ padding: '20px 24px' }}>
-                      {(stats.levelProgress || []).map((item, i) => (
-                        <div key={item.label} style={{ marginBottom: 14 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                            <span style={{ fontSize: 12, color: T.sub }}>{item.label}</span>
-                            <span style={{ fontSize: 12, color: T.muted }}>{item.earned}/{item.credits}C</span>
-                          </div>
-                          <div style={{ height: 8, background: T.border, borderRadius: 4, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${item.percent}%`, background: i === 0 ? '#6366f1' : '#475569', borderRadius: 4, transition: 'width 0.5s' }} />
-                          </div>
+                <Card>
+                  <CardHeader title="Forecast Result" subtitle="Minimum A/A+ grades needed" />
+                  <div style={{ padding: '20px 24px' }}>
+                    {forecast.status === 'guaranteed' ? (
+                      <div style={{ color: '#10b981', fontWeight: 700, marginBottom: 12 }}>First Class is already mathematically secured.</div>
+                    ) : forecast.status === 'impossible' ? (
+                      <div style={{ color: '#f87171', fontWeight: 700, marginBottom: 12 }}>First Class is no longer mathematically reachable with the remaining subjects.</div>
+                    ) : (
+                      <div style={{ color: '#e2e8f0', fontWeight: 700, marginBottom: 12 }}>You need at least {forecast.minimumHighGrades ?? '-'} A/A+ grades among your remaining subjects to reach a cumulative GPA of {formatNumber(forecast.targetGPA ?? targetGPA, 2)}.</div>
+                    )}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 12 }}>
+                      <div style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                        <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase', letterSpacing: '.08em' }}>Projected GPA</div>
+                        <div style={{ fontSize: 24, fontWeight: 700, color: '#fbbf24', marginTop: 8 }}>{forecast.projectedGPA !== null ? formatNumber(forecast.projectedGPA, 3) : '-'}</div>
+                      </div>
+                      {forecast.status === 'impossible' ? (
+                        <div style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                          <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase', letterSpacing: '.08em' }}>Max Achievable GPA</div>
+                          <div style={{ fontSize: 24, fontWeight: 700, color: '#f87171', marginTop: 8 }}>{forecast.maxAchievableGPA !== null ? formatNumber(forecast.maxAchievableGPA, 3) : '-'}</div>
                         </div>
-                      ))}
+                      ) : null}
+                    </div>
+
+                    {forecast.examplePath && Object.keys(forecast.examplePath).length > 0 && (
+                      <div style={{ marginTop: 20 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Example grade combination</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+                          {Object.entries(forecast.examplePath).map(([grade, count]) => (
+                            <div key={grade} style={{ background: '#111827', borderRadius: 10, padding: 12, border: `1px solid ${T.border}` }}>
+                              <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{grade}</div>
+                              <div style={{ fontSize: 20, fontWeight: 700, color: '#c7d2fe', marginTop: 6 }}>{count}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                {forecast.status === 'possible' && forecast.alternativeScenarios?.length > 0 && (
+                  <Card>
+                    <CardHeader title="Alternative Scenarios" subtitle="More A/A+ grades improve projected GPA" />
+                    <div style={{ padding: '20px 24px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                        {forecast.alternativeScenarios.map((scenario) => (
+                          <div key={scenario.highGrades} style={{ background: '#0f1117', borderRadius: 12, padding: 16, border: `1px solid ${T.border}` }}>
+                            <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase', letterSpacing: '.08em' }}>A/A+ grades</div>
+                            <div style={{ fontSize: 24, fontWeight: 700, color: '#c7d2fe', marginTop: 6 }}>{scenario.highGrades}</div>
+                            <div style={{ fontSize: 11, color: T.sub, marginTop: 8 }}>Projected GPA {scenario.projectedGPA !== null ? formatNumber(scenario.projectedGPA, 3) : '-'}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </Card>
-                </div>
+                )}
               </div>
             )}
 
@@ -319,9 +344,30 @@ export default function App() {
                   </div>
                 </Card>
                 <Card>
-                  <CardHeader title="Subject Performance" subtitle="You vs Batch Average" />
+                  <CardHeader title="Subject Performance" subtitle="You vs Batch Average">
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {['bar', 'line'].map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setSubjectChartType(type)}
+                          style={{
+                            background: subjectChartType === type ? '#6366f1' : '#1e2236',
+                            color: subjectChartType === type ? '#eff6ff' : '#94a3b8',
+                            border: '1px solid #2d3148',
+                            borderRadius: 8,
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                          }}
+                        >
+                          {type === 'bar' ? 'Bar' : 'Line'}
+                        </button>
+                      ))}
+                    </div>
+                  </CardHeader>
                   <div style={{ padding: '16px 20px 8px' }}>
-                    <SubjectComparisonChart data={subjectChartData} />
+                    <SubjectComparisonChart data={subjectChartData} type={subjectChartType} />
                   </div>
                 </Card>
                 <Card>
